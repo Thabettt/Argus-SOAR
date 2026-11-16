@@ -56,12 +56,77 @@
           "Next": "AlreadyHandled"
         }
       ],
-      "Next": "PreserveEvidence"
+      "Next": "LockResource"
     },
 
     "AlreadyHandled": {
       "Type": "Succeed",
       "Comment": "Another execution already handled (or is handling) this finding."
+    },
+
+    "LockResource": {
+      "Type": "Task",
+      "Comment": "Per-resource guard: different findings about the same resource (GuardDuty raises one per mining domain) must not run concurrent playbooks against it.",
+      "Resource": "arn:aws:states:::dynamodb:putItem",
+      "Parameters": {
+        "TableName": "${table_name}",
+        "Item": {
+          "finding_id": {"S.$": "$.envelope.resource_lock.key"},
+          "owner_finding_id": {"S.$": "$.envelope.finding_id"},
+          "owner_incident_key": {"S.$": "$.envelope.incident_key"},
+          "lock_until": {"S.$": "$.envelope.resource_lock.until"},
+          "locked_at": {"S.$": "$$.State.EnteredTime"}
+        },
+        "ConditionExpression": "attribute_not_exists(finding_id) OR lock_until < :now OR owner_finding_id = :me",
+        "ExpressionAttributeValues": {
+          ":now": {"S.$": "$$.State.EnteredTime"},
+          ":me": {"S.$": "$.envelope.finding_id"}
+        }
+      },
+      "ResultPath": null,
+      "TimeoutSeconds": 20,
+      "Retry": [
+        {
+          "ErrorEquals": ["DynamoDB.ProvisionedThroughputExceededException", "DynamoDB.ThrottlingException", "DynamoDB.InternalServerErrorException"],
+          "IntervalSeconds": 1,
+          "BackoffRate": 2,
+          "MaxAttempts": 3
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["DynamoDB.ConditionalCheckFailedException"],
+          "ResultPath": null,
+          "Next": "MarkDuplicate"
+        }
+      ],
+      "Next": "PreserveEvidence"
+    },
+
+    "MarkDuplicate": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "${table_name}",
+        "Key": {
+          "finding_id": {"S.$": "$.envelope.finding_id"}
+        },
+        "UpdateExpression": "SET #s = :dup, completed_at = :t, duplicate_of = :lock",
+        "ExpressionAttributeNames": {"#s": "status"},
+        "ExpressionAttributeValues": {
+          ":dup": {"S": "DUPLICATE"},
+          ":t": {"S.$": "$$.State.EnteredTime"},
+          ":lock": {"S.$": "$.envelope.resource_lock.key"}
+        }
+      },
+      "ResultPath": null,
+      "TimeoutSeconds": 20,
+      "Next": "DuplicateForResource"
+    },
+
+    "DuplicateForResource": {
+      "Type": "Succeed",
+      "Comment": "Another incident already holds this resource; this finding is recorded as a duplicate."
     },
 
     "PreserveEvidence": {
@@ -228,6 +293,32 @@
         {
           "ErrorEquals": ["States.ALL"],
           "ResultPath": "$.mark_failed_error",
+          "Next": "ReleaseLock"
+        }
+      ],
+      "Next": "ReleaseLock"
+    },
+
+    "ReleaseLock": {
+      "Type": "Task",
+      "Comment": "Free the resource so a retry of this (FAILED) incident, or a new finding, can act on it.",
+      "Resource": "arn:aws:states:::dynamodb:deleteItem",
+      "Parameters": {
+        "TableName": "${table_name}",
+        "Key": {
+          "finding_id": {"S.$": "$.envelope.resource_lock.key"}
+        },
+        "ConditionExpression": "owner_finding_id = :me",
+        "ExpressionAttributeValues": {
+          ":me": {"S.$": "$.envelope.finding_id"}
+        }
+      },
+      "ResultPath": null,
+      "TimeoutSeconds": 20,
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": null,
           "Next": "NotifyFailure"
         }
       ],

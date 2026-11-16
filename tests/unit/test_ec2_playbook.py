@@ -109,3 +109,31 @@ def test_eradicate_stops_instance(env):
     handler.lambda_handler({"phase": "eradicate", "envelope": envelope}, None)
     state = ec2.describe_instances(InstanceIds=[instance_id])["Reservations"][0]["Instances"][0]["State"]["Name"]
     assert state in ("stopping", "stopped")
+
+
+def test_snapshot_rate_limit_is_retried(env, monkeypatch):
+    """Several findings for one instance once hit SnapshotCreationPerVolumeRateExceeded."""
+    from botocore.exceptions import ClientError
+
+    forensics = load_handler("forensics")
+    monkeypatch.setattr(forensics, "SNAPSHOT_BACKOFF_SECONDS", 0)
+    ec2 = env[0]
+    calls = {"n": 0}
+    real = ec2.create_snapshot
+
+    class Flaky:
+        def __getattr__(self, name):
+            return getattr(ec2, name)
+
+        def create_snapshot(self, **kw):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise ClientError({"Error": {"Code": "SnapshotCreationPerVolumeRateExceeded", "Message": "slow down"}},
+                                  "CreateSnapshot")
+            return real(**kw)
+
+    vol = ec2.describe_instances(InstanceIds=[env[3]])["Reservations"][0]["Instances"][0][
+        "BlockDeviceMappings"][0]["Ebs"]["VolumeId"]
+    from argus_shared.phase import PhaseRecorder
+    result = forensics._snapshot_once(Flaky(), vol, "key123", env[3], PhaseRecorder("p"))
+    assert result["snapshot_id"].startswith("snap-") and calls["n"] == 2

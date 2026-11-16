@@ -57,7 +57,7 @@ resource "aws_iam_role_policy" "sfn" {
       },
       {
         Effect   = "Allow"
-        Action   = ["dynamodb:PutItem", "dynamodb:UpdateItem"]
+        Action   = ["dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem"]
         Resource = var.incidents_table_arn
       },
       {

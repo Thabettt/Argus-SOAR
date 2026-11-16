@@ -94,3 +94,37 @@ def test_validator_accepts_state_machine_payload():
     envelope = load_handler("validator").lambda_handler(
         {"playbook": "ec2", "finding": load_event("ec2_transformer_input.json")}, None)
     assert envelope["target"]["id"] == "i-0123456789abcdef0"
+
+
+def test_resource_lock_follows_finding_guard(definition):
+    states = definition["States"]
+    assert states["RecordIncident"]["Next"] == "LockResource"
+    lock = states["LockResource"]
+    assert lock["Next"] == "PreserveEvidence"
+    assert lock["Parameters"]["Item"]["finding_id"] == {"S.$": "$.envelope.resource_lock.key"}
+    assert "lock_until < :now" in lock["Parameters"]["ConditionExpression"]
+    assert lock["Catch"][0]["ErrorEquals"] == ["DynamoDB.ConditionalCheckFailedException"]
+    assert lock["Catch"][0]["Next"] == "MarkDuplicate"
+    assert states["MarkDuplicate"]["Next"] == "DuplicateForResource"
+
+
+def test_failure_path_releases_only_its_own_lock(definition):
+    states = definition["States"]
+    assert states["MarkFailed"]["Next"] == "ReleaseLock"
+    release = states["ReleaseLock"]
+    assert release["Parameters"]["ConditionExpression"] == "owner_finding_id = :me"
+    assert release["Next"] == release["Catch"][0]["Next"] == "NotifyFailure"
+
+
+def test_validator_adds_resource_lock():
+    import os
+    from datetime import datetime, timezone
+
+    os.environ["SIM_INSTANCE_IDS"] = "i-0123456789abcdef0"
+    envelope = load_handler("validator").lambda_handler(
+        {"playbook": "ec2", "finding": load_event("ec2_transformer_input.json")}, None)
+    lock = envelope["resource_lock"]
+    assert lock["key"] == "lock#arn:aws:ec2:us-east-1:111122223333:instance/i-0123456789abcdef0"
+    # Comparable as a string with $$.State.EnteredTime (e.g. 2026-11-16T20:47:25.818Z)
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+    assert lock["until"] > now

@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from datetime import datetime, timedelta, timezone
 
 from botocore.exceptions import ClientError
@@ -31,6 +32,8 @@ log = logging.getLogger()
 log.setLevel(logging.INFO)
 
 MAX_OBJECT_VERSIONS = 2000
+SNAPSHOT_ATTEMPTS = 4
+SNAPSHOT_BACKOFF_SECONDS = 3
 
 
 def lambda_handler(event, _context):
@@ -190,16 +193,24 @@ def _snapshot_once(ec2, volume_id, incident_key, instance_id, rec):
     if existing:
         rec.record("ec2:CreateSnapshot", volume_id, "skipped", {"reused": existing[0]["SnapshotId"]})
         return {"volume_id": volume_id, "snapshot_id": existing[0]["SnapshotId"]}
-    snap = ec2.create_snapshot(
-        VolumeId=volume_id,
-        Description=f"Argus forensic snapshot of {instance_id} ({incident_key})",
-        TagSpecifications=[{
-            "ResourceType": "snapshot",
-            "Tags": [{"Key": INCIDENT_TAG_KEY, "Value": incident_key},
-                     {"Key": MANAGED_TAG_KEY, "Value": MANAGED_TAG_VALUE},
-                     {"Key": "Name", "Value": f"argus-forensics-{incident_key}"}],
-        }],
-    )
+    # EC2 limits CreateSnapshot per volume; back off instead of failing the incident.
+    for attempt in range(SNAPSHOT_ATTEMPTS):
+        try:
+            snap = ec2.create_snapshot(
+                VolumeId=volume_id,
+                Description=f"Argus forensic snapshot of {instance_id} ({incident_key})",
+                TagSpecifications=[{
+                    "ResourceType": "snapshot",
+                    "Tags": [{"Key": INCIDENT_TAG_KEY, "Value": incident_key},
+                             {"Key": MANAGED_TAG_KEY, "Value": MANAGED_TAG_VALUE},
+                             {"Key": "Name", "Value": f"argus-forensics-{incident_key}"}],
+                }],
+            )
+            break
+        except ClientError as exc:
+            if au.error_code(exc) != "SnapshotCreationPerVolumeRateExceeded" or attempt == SNAPSHOT_ATTEMPTS - 1:
+                raise
+            time.sleep(SNAPSHOT_BACKOFF_SECONDS * (2 ** attempt))
     rec.record("ec2:CreateSnapshot", volume_id, detail={"snapshot_id": snap["SnapshotId"]})
     return {"volume_id": volume_id, "snapshot_id": snap["SnapshotId"]}
 
