@@ -96,8 +96,11 @@ resource "aws_instance" "miner" {
 
   lifecycle {
     # Argus changes these during an incident (quarantine groups, profile removal,
-    # termination protection, tags). Don't fight it on the next plan.
-    ignore_changes = [ami, vpc_security_group_ids, iam_instance_profile, disable_api_termination, tags]
+    # termination protection, tags, and stopping - which releases the public IP, and
+    # associate_public_ip_address would otherwise force a replacement that destroys
+    # the quarantined instance). Don't fight it on the next plan.
+    ignore_changes = [ami, vpc_security_group_ids, iam_instance_profile, disable_api_termination, tags,
+    associate_public_ip_address]
   }
 }
 
