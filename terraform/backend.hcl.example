@@ -1,0 +1,4 @@
+# Copy to backend.hcl and fill in the bootstrap output.
+bucket = "argus-tfstate-<account-id>-<region>"
+key    = "argus/terraform.tfstate"
+region = "<region>"

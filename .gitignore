@@ -25,3 +25,6 @@ venv/
 # Local env / secrets
 .env
 *.pem
+
+# Terraform backend settings (contain the account ID)
+terraform/backend.hcl
