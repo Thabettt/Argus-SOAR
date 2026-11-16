@@ -344,6 +344,15 @@ resource "aws_iam_role_policy" "remediation" {
         Condition = { ArnEquals = { "ec2:Vpc" = "arn:${local.p}:ec2:${var.region}:${local.acct}:vpc/${var.vpc_id}" } }
       },
       {
+        # ReplaceNetworkAclAssociation is also authorized against the SUBNET (found live:
+        # granting only the network-acl resource fails). Only dedicated subnets qualify.
+        Sid       = "QuarantineDedicatedSubnetResource"
+        Effect    = "Allow"
+        Action    = "ec2:ReplaceNetworkAclAssociation"
+        Resource  = "arn:${local.p}:ec2:${var.region}:${local.acct}:subnet/*"
+        Condition = { StringEquals = { "aws:ResourceTag/argus:dedicated-subnet" = "true" } }
+      },
+      {
         Sid    = "ContainManagedInstances"
         Effect = "Allow"
         Action = ["ec2:ModifyInstanceAttribute", "ec2:StopInstances", "ec2:DisassociateIamInstanceProfile",
