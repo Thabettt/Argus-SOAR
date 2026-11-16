@@ -1,5 +1,5 @@
-# One rule per playbook on the default bus, matching Security Hub "Findings - Imported".
-# Each rule: GuardDuty only, finding type by wildcard on ASFF Types, its OWN severity
+# Rules on the default bus, matching Security Hub "Findings - Imported".
+# GuardDuty rules: finding type by wildcard on ASFF Types, its OWN severity
 # threshold, RecordState ACTIVE and any workflow status but SUPPRESSED, and scoped to
 # the exact simulation resources.
 #
@@ -62,6 +62,31 @@ locals {
     }
   }
 
+  guardduty_patterns = {
+    for k, r in local.rules : k => merge(local.common_finding, r.scope, {
+      Types    = [{ wildcard = r.types }]
+      Severity = { Label = local.severities_from[r.min_severity] }
+    })
+  }
+
+  # AWS Config's state-based signal. In the live test it flagged the public bucket in
+  # ~45 s, while GuardDuty's update reached Argus ~10 min later; routing it closes the
+  # exposure window. Only FAILED evaluations of the Argus rule on the simulation bucket.
+  config_patterns = {
+    s3-config = merge(local.common_finding, {
+      ProductName = ["Config"]
+      Title       = ["${var.prefix}-s3-bucket-public-read-prohibited"]
+      Compliance  = { Status = ["FAILED"] }
+      Resources   = { Id = [var.sim_bucket_arn] }
+    })
+  }
+
+  patterns = merge(local.guardduty_patterns, local.config_patterns)
+
+  rule_target = merge({ for k, r in local.rules : k => r.state_machine }, { s3-config = "s3" })
+  rule_description = merge({ for k, r in local.rules : k => r.description },
+  { s3-config = "AWS Config: the simulation bucket allows public reads" })
+
   input_paths = {
     event_id        = "$.id"
     event_received  = "$.time"
@@ -116,24 +141,17 @@ resource "aws_iam_role_policy" "events" {
 }
 
 resource "aws_cloudwatch_event_rule" "playbook" {
-  for_each    = local.rules
+  for_each    = local.patterns
   name        = "${var.prefix}-${each.key}"
-  description = each.value.description
+  description = local.rule_description[each.key]
 
-  event_pattern = jsonencode(merge(local.base, {
-    detail = {
-      findings = merge(local.common_finding, each.value.scope, {
-        Types    = [{ wildcard = each.value.types }]
-        Severity = { Label = local.severities_from[each.value.min_severity] }
-      })
-    }
-  }))
+  event_pattern = jsonencode(merge(local.base, { detail = { findings = each.value } }))
 }
 
 resource "aws_cloudwatch_event_target" "playbook" {
-  for_each = local.rules
+  for_each = local.patterns
   rule     = aws_cloudwatch_event_rule.playbook[each.key].name
-  arn      = var.state_machine_arns[each.value.state_machine]
+  arn      = var.state_machine_arns[local.rule_target[each.key]]
   role_arn = aws_iam_role.events.arn
 
   input_transformer {
