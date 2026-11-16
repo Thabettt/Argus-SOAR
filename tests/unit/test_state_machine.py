@@ -30,6 +30,14 @@ VARS = {
 }
 
 
+def transitions(state):
+    """Every state a state can move to: Next, Catch targets, and Choice branches."""
+    targets = [state.get("Next"), state.get("Default")]
+    targets += [c["Next"] for c in state.get("Catch", [])]
+    targets += [c["Next"] for c in state.get("Choices", [])]
+    return [t for t in targets if t]
+
+
 @pytest.fixture(scope="module")
 def definition():
     text = TEMPLATE.read_text()
@@ -46,8 +54,7 @@ def test_every_transition_target_exists(definition):
     states = definition["States"]
     assert definition["StartAt"] in states
     for name, state in states.items():
-        targets = [state.get("Next")] + [c["Next"] for c in state.get("Catch", [])]
-        for target in filter(None, targets):
+        for target in transitions(state):
             assert target in states, f"{name} -> {target}"
 
 
@@ -60,7 +67,7 @@ def test_all_states_reachable(definition):
             continue
         seen.add(name)
         state = states[name]
-        todo += [t for t in [state.get("Next")] + [c["Next"] for c in state.get("Catch", [])] if t]
+        todo += transitions(state)
     assert seen == set(states)
 
 
@@ -140,4 +147,7 @@ def test_incident_and_lock_keys_use_the_occurrence(definition):
     assert states["RecordIncident"]["Parameters"]["Item"]["finding_id"] == {"S.$": "$.envelope.occurrence_id"}
     assert states["LockResource"]["Parameters"]["ExpressionAttributeValues"][":me"] == {"S.$": "$.envelope.occurrence_id"}
     assert states["MarkDuplicate"]["Next"] == "ResolveDuplicateFinding"
-    assert states["ResolveDuplicateFinding"]["Next"] == "DuplicateForResource"
+    assert states["ResolveDuplicateFinding"]["Next"] == "DuplicateHasOtherActor"
+    choice = states["DuplicateHasOtherActor"]
+    assert choice["Choices"][0]["Next"] == "ChainActor" and choice["Default"] == "DuplicateForResource"
+    assert states["ChainActor"]["Parameters"]["phase"] == "chain_actor"

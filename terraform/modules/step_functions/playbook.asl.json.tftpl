@@ -149,6 +149,42 @@
         {
           "ErrorEquals": ["States.ALL"],
           "ResultPath": null,
+          "Next": "DuplicateHasOtherActor"
+        }
+      ],
+      "Next": "DuplicateHasOtherActor"
+    },
+
+    "DuplicateHasOtherActor": {
+      "Type": "Choice",
+      "Comment": "S3 only: the bucket is already handled, but this finding may name a different attacker credential.",
+      "Choices": [
+        {
+          "And": [
+            {"Variable": "$.envelope.playbook", "StringEquals": "s3"},
+            {"Variable": "$.envelope.actor.user_name", "IsPresent": true}
+          ],
+          "Next": "ChainActor"
+        }
+      ],
+      "Default": "DuplicateForResource"
+    },
+
+    "ChainActor": {
+      "Type": "Task",
+      "Comment": "Start the IAM playbook for the actor; its own resource lock prevents double containment.",
+      "Resource": "${playbook_arn}",
+      "Parameters": {
+        "phase": "chain_actor",
+        "envelope.$": "$.envelope"
+      },
+      "ResultPath": "$.chain",
+      "TimeoutSeconds": 30,
+      "Retry": [${lambda_retry}],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.chain_error",
           "Next": "DuplicateForResource"
         }
       ],

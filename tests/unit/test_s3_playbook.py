@@ -120,3 +120,25 @@ def test_eradicate_chains_into_iam_playbook(env):
     # the same name and input is idempotent while running, and ExecutionAlreadyExists after.)
     handler.lambda_handler({"phase": "eradicate", "envelope": envelope}, None)
     assert len(sfn.list_executions(stateMachineArn=sm)["executions"]) == 1
+
+
+def test_duplicate_finding_still_chains_its_actor(env):
+    """Live finding: another actor's incident held the bucket; the exfil user must still be contained."""
+    _s3, envelope = env
+    sfn = boto3.client("stepfunctions")
+    sm = sfn.create_state_machine(
+        name="argus-iam-playbook",
+        definition=json.dumps({"StartAt": "Done", "States": {"Done": {"Type": "Succeed"}}}),
+        roleArn=f"arn:aws:iam::{ACCOUNT}:role/sfn")["stateMachineArn"]
+    os.environ["IAM_STATE_MACHINE_ARN"] = sm
+
+    result = load_handler("playbooks/s3_exfil").lambda_handler({"phase": "chain_actor", "envelope": envelope}, None)
+    assert result["phase"] == "chain_actor"
+    assert [a["result"] for a in result["actions"]] == ["ok"]
+    # The bucket itself is untouched in this path.
+    assert s3_policy_absent_or_public(_s3)
+
+
+def s3_policy_absent_or_public(s3):
+    stmt = json.loads(s3.get_bucket_policy(Bucket=BUCKET)["Policy"])["Statement"][0]
+    return stmt["Sid"] == "Public"

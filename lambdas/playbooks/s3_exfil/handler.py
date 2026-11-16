@@ -41,9 +41,16 @@ log.setLevel(logging.INFO)
 
 def lambda_handler(event, _context):
     envelope = event["envelope"]
+    phase = event["phase"]
+    if phase == "chain_actor":
+        # A DUPLICATE finding: the bucket is already handled by another incident, but this
+        # finding may name a different attacker credential, which still needs containing.
+        rec = PhaseRecorder("chain_actor")
+        chain_to_iam(au.client("stepfunctions"), envelope, rec)
+        return rec.result()
+
     session = au.assume_role(os.environ["REMEDIATION_ROLE_ARN"], envelope["incident_key"])
     s3 = au.client("s3", session)
-    phase = event["phase"]
     if phase == "contain":
         return contain(s3, envelope, event.get("evidence", {}))
     if phase == "eradicate":
