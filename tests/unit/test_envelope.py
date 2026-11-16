@@ -79,3 +79,13 @@ def test_scope_rejects_unknown_instance():
     env = build_envelope(load_event("ec2_transformer_input.json"), "ec2")
     with pytest.raises(OutOfScope):
         check_scope(env, {"i-someotherinstance"})
+
+
+def test_real_captured_ec2_event():
+    """Captured from the first live run (account and IDs replaced)."""
+    raw = load_event("ec2_transformer_input.real.json")
+    assert raw["finding_type"] == "TTPs/Command and Control/CryptoCurrency:EC2-BitcoinTool.B!DNS"
+    env = build_envelope(raw, "ec2")
+    assert env["target"]["id"] == "i-0123456789abcdef0"
+    assert env["severity"] == "HIGH"
+    check_scope(env, {"i-0123456789abcdef0"})

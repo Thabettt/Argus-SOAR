@@ -1,0 +1,46 @@
+{
+  "account": "111122223333",
+  "event_id": "5428541e-cd7c-a9fc-791d-d9452f99792b",
+  "event_received": "2026-11-16T21:00:29Z",
+  "finding_created": "2026-11-16T20:47:04.798Z",
+  "finding_id": "arn:aws:guardduty:us-east-1:111122223333:detector/00000000000000000000000000000000/finding/40d0f30e842f2355f90c29f844c7f31d",
+  "finding_type": "TTPs/Command and Control/CryptoCurrency:EC2-BitcoinTool.B!DNS",
+  "product_arn": "arn:aws:securityhub:us-east-1::product/aws/guardduty",
+  "region": "us-east-1",
+  "resources": [
+    {
+      "Details": {
+        "AwsEc2Instance": {
+          "IamInstanceProfileArn": "arn:aws:iam::111122223333:instance-profile/argus-sim-instance-profile",
+          "ImageId": "ami-0123456789abcdef0",
+          "IpV4Addresses": [
+            "203.0.113.10",
+            "10.42.1.154"
+          ],
+          "LaunchedAt": "2026-11-16T20:37:22.000Z",
+          "SubnetId": "subnet-0123456789abcdef0",
+          "Type": "t3.micro",
+          "VpcId": "vpc-0123456789abcdef0"
+        }
+      },
+      "Id": "arn:aws:ec2:us-east-1:111122223333:instance/i-0123456789abcdef0",
+      "Owner": {
+        "Account": {
+          "Id": "111122223333"
+        }
+      },
+      "Partition": "aws",
+      "Provider": "AWS",
+      "Region": "us-east-1",
+      "Tags": {
+        "Name": "argus-sim-miner",
+        "argus:managed": "true",
+        "argus:role": "attack-target",
+        "managed_by": "terraform",
+        "project": "argus"
+      },
+      "Type": "AwsEc2Instance"
+    }
+  ],
+  "severity": "HIGH"
+}
