@@ -1,0 +1,27 @@
+# Personal study material, not part of the project
+/mini course/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+*.tfvars
+!*.tfvars.example
+.terraform.tfstate.lock.info
+
+# Build artifacts
+build/
+*.zip
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Local env / secrets
+.env
+*.pem
