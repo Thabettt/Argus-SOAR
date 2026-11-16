@@ -34,9 +34,9 @@ class OutOfScope(Exception):
     """The finding targets a resource Argus must never touch."""
 
 
-def incident_key_for(finding_id: str) -> str:
-    """Short, S3-safe key derived from the finding ID (finding IDs contain '/' and ':')."""
-    return hashlib.sha256(finding_id.encode("utf-8")).hexdigest()[:16]
+def incident_key_for(occurrence_id: str) -> str:
+    """Short, S3-safe key derived from the occurrence ID (finding IDs contain '/' and ':')."""
+    return hashlib.sha256(occurrence_id.encode("utf-8")).hexdigest()[:16]
 
 
 def build_envelope(raw: dict[str, Any], playbook: str) -> dict[str, Any]:
@@ -53,10 +53,19 @@ def build_envelope(raw: dict[str, Any], playbook: str) -> dict[str, Any]:
     kind = KIND_FOR_PLAYBOOK[playbook]
     target = _target_from_resources(kind, resources, raw["account"], raw["region"])
 
+    # GuardDuty doesn't create a new finding when activity recurs: it updates the same
+    # finding (new UpdatedAt). One incident per OCCURRENCE (finding ID + UpdatedAt) means
+    # exact re-deliveries are still de-duplicated, but a recurrence after recovery is a
+    # new incident. The per-resource lock absorbs bursts of updates.
+    finding_updated = raw.get("finding_updated") or raw["finding_created"]
+    occurrence_id = f"{raw['finding_id']}#{finding_updated}"
+
     envelope = {
-        "incident_id": raw["finding_id"],
-        "incident_key": incident_key_for(raw["finding_id"]),
+        "incident_id": occurrence_id,
+        "occurrence_id": occurrence_id,
+        "incident_key": incident_key_for(occurrence_id),
         "finding_id": raw["finding_id"],
+        "finding_updated": finding_updated,
         "product_arn": raw["product_arn"],
         "event_id": raw["event_id"],
         "event_received": raw["event_received"],

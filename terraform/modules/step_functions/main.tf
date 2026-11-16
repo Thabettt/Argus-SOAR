@@ -61,6 +61,12 @@ resource "aws_iam_role_policy" "sfn" {
         Resource = var.incidents_table_arn
       },
       {
+        # ResolveDuplicateFinding closes duplicate findings directly from the state machine.
+        Effect   = "Allow"
+        Action   = "securityhub:BatchUpdateFindings"
+        Resource = "*"
+      },
+      {
         # Required by Step Functions to deliver execution logs to CloudWatch Logs.
         Effect = "Allow"
         Action = ["logs:CreateLogDelivery", "logs:GetLogDelivery", "logs:UpdateLogDelivery",

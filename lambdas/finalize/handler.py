@@ -25,7 +25,7 @@ def lambda_handler(event, _context):
 
     au.client("dynamodb").update_item(
         TableName=os.environ["INCIDENTS_TABLE"],
-        Key={"finding_id": {"S": envelope["finding_id"]}},
+        Key={"finding_id": {"S": envelope["occurrence_id"]}},
         UpdateExpression="SET #s = :c, completed_at = :t, evidence_uri = :u, evidence_sha256 = :h, "
                          "time_to_contain_seconds = :ttc",
         ExpressionAttributeNames={"#s": "status"},

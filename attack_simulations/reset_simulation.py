@@ -29,6 +29,13 @@ def ignore(codes, fn, *a, **kw):
         return None
 
 
+def release_lock(session, out, resource_arn):
+    """Recovery closes the incident: free the resource so a new attack is a new incident."""
+    session.client("dynamodb").delete_item(TableName=out["incidents_table"],
+                                           Key={"finding_id": {"S": f"lock#{resource_arn}"}})
+    print(f"  resource lock released for {resource_arn}")
+
+
 def reset_user(iam, user):
     ignore({"NoSuchEntity"}, iam.detach_user_policy, UserName=user, PolicyArn=DENY_ALL)
     for key in iam.list_access_keys(UserName=user)["AccessKeyMetadata"]:
@@ -45,8 +52,10 @@ def reset_role(iam, role):
 def reset_iam(session, out):
     banner("IAM")
     iam = session.client("iam")
+    account = session.client("sts").get_caller_identity()["Account"]
     for user in (out["sim_backdoor_user"], out["sim_exfil_user"]):
         reset_user(iam, user)
+        release_lock(session, out, f"arn:aws:iam::{account}:user/{user}")
     reset_role(iam, out["sim_instance_role_name"])
 
 
@@ -71,6 +80,9 @@ def reset_ec2(session, out, start, delete_snapshots):
     ec2.delete_tags(Resources=[iid], Tags=[{"Key": k} for k in ARGUS_TAGS])
     reset_role(session.client("iam"), out["sim_instance_role_name"])
     print("  termination protection off, Argus tags removed")
+
+    account = session.client("sts").get_caller_identity()["Account"]
+    release_lock(session, out, f"arn:aws:ec2:{out['region']}:{account}:instance/{iid}")
 
     if start and instance["State"]["Name"] == "stopped":
         ec2.start_instances(InstanceIds=[iid])
@@ -105,6 +117,7 @@ def reset_s3(session, out):
         kept = [t for t in tags["TagSet"] if t["Key"] not in ARGUS_TAGS]
         s3.put_bucket_tagging(Bucket=bucket, Tagging={"TagSet": kept})
     print("  Block Public Access back on, Argus tags removed")
+    release_lock(session, out, f"arn:aws:s3:::{bucket}")
 
 
 def main():

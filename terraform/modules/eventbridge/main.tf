@@ -1,7 +1,7 @@
 # One rule per playbook on the default bus, matching Security Hub "Findings - Imported".
 # Each rule: GuardDuty only, finding type by wildcard on ASFF Types, its OWN severity
-# threshold, Workflow NEW + RecordState ACTIVE (so updates - including Argus's own
-# RESOLVED update - never re-trigger), and scoped to the exact simulation resources.
+# threshold, RecordState ACTIVE and any workflow status but SUPPRESSED, and scoped to
+# the exact simulation resources.
 #
 # Verify the Types strings and the IAM principal field against real captured events
 # (build plan Phase 3) before trusting these patterns.
@@ -14,7 +14,11 @@ locals {
 
   common_finding = {
     ProductName = ["GuardDuty"]
-    Workflow    = { Status = ["NEW"] }
+    # Anything but SUPPRESSED (a human said "ignore this"). RESOLVED findings stay in, so a
+    # recurrence after recovery triggers again: GuardDuty updates the same finding (new
+    # UpdatedAt) instead of creating one. Argus's own RESOLVED update keeps the same
+    # UpdatedAt, so it is de-duplicated by the per-occurrence key.
+    Workflow    = { Status = [{ "anything-but" = ["SUPPRESSED"] }] }
     RecordState = ["ACTIVE"]
   }
 
@@ -66,6 +70,7 @@ locals {
     finding_type    = "$.detail.findings[0].Types[0]"
     severity        = "$.detail.findings[0].Severity.Label"
     finding_created = "$.detail.findings[0].CreatedAt"
+    finding_updated = "$.detail.findings[0].UpdatedAt"
     account         = "$.detail.findings[0].AwsAccountId"
     region          = "$.detail.findings[0].Region"
     resources       = "$.detail.findings[0].Resources"
@@ -73,7 +78,7 @@ locals {
 
   # Unquoted placeholders: EventBridge inserts strings with quotes and objects/arrays as JSON.
   input_template = <<-EOT
-    {"finding_id": <finding_id>, "product_arn": <product_arn>, "event_id": <event_id>, "event_received": <event_received>, "finding_type": <finding_type>, "severity": <severity>, "finding_created": <finding_created>, "account": <account>, "region": <region>, "resources": <resources>}
+    {"finding_id": <finding_id>, "product_arn": <product_arn>, "event_id": <event_id>, "event_received": <event_received>, "finding_type": <finding_type>, "severity": <severity>, "finding_created": <finding_created>, "finding_updated": <finding_updated>, "account": <account>, "region": <region>, "resources": <resources>}
   EOT
 }
 

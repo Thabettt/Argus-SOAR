@@ -25,8 +25,10 @@
       "Parameters": {
         "TableName": "${table_name}",
         "Item": {
-          "finding_id": {"S.$": "$.envelope.finding_id"},
+          "finding_id": {"S.$": "$.envelope.occurrence_id"},
           "incident_key": {"S.$": "$.envelope.incident_key"},
+          "security_hub_finding_id": {"S.$": "$.envelope.finding_id"},
+          "finding_updated": {"S.$": "$.envelope.finding_updated"},
           "status": {"S": "IN_PROGRESS"},
           "playbook": {"S": "${playbook}"},
           "finding_type": {"S.$": "$.envelope.finding_type"},
@@ -72,7 +74,7 @@
         "TableName": "${table_name}",
         "Item": {
           "finding_id": {"S.$": "$.envelope.resource_lock.key"},
-          "owner_finding_id": {"S.$": "$.envelope.finding_id"},
+          "owner_finding_id": {"S.$": "$.envelope.occurrence_id"},
           "owner_incident_key": {"S.$": "$.envelope.incident_key"},
           "lock_until": {"S.$": "$.envelope.resource_lock.until"},
           "locked_at": {"S.$": "$$.State.EnteredTime"}
@@ -80,7 +82,7 @@
         "ConditionExpression": "attribute_not_exists(finding_id) OR lock_until < :now OR owner_finding_id = :me",
         "ExpressionAttributeValues": {
           ":now": {"S.$": "$$.State.EnteredTime"},
-          ":me": {"S.$": "$.envelope.finding_id"}
+          ":me": {"S.$": "$.envelope.occurrence_id"}
         }
       },
       "ResultPath": null,
@@ -109,7 +111,7 @@
       "Parameters": {
         "TableName": "${table_name}",
         "Key": {
-          "finding_id": {"S.$": "$.envelope.finding_id"}
+          "finding_id": {"S.$": "$.envelope.occurrence_id"}
         },
         "UpdateExpression": "SET #s = :dup, completed_at = :t, duplicate_of = :lock",
         "ExpressionAttributeNames": {"#s": "status"},
@@ -121,6 +123,35 @@
       },
       "ResultPath": null,
       "TimeoutSeconds": 20,
+      "Next": "ResolveDuplicateFinding"
+    },
+
+    "ResolveDuplicateFinding": {
+      "Type": "Task",
+      "Comment": "Close the duplicate in Security Hub too, pointing at the incident that holds the resource. Best effort.",
+      "Resource": "arn:aws:states:::aws-sdk:securityhub:batchUpdateFindings",
+      "Parameters": {
+        "FindingIdentifiers": [
+          {
+            "Id.$": "$.envelope.finding_id",
+            "ProductArn.$": "$.envelope.product_arn"
+          }
+        ],
+        "Workflow": {"Status": "RESOLVED"},
+        "Note": {
+          "Text.$": "States.Format('Duplicate: another Argus incident already contained {}', $.envelope.target.arn)",
+          "UpdatedBy": "argus-soar"
+        }
+      },
+      "ResultPath": null,
+      "TimeoutSeconds": 20,
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": null,
+          "Next": "DuplicateForResource"
+        }
+      ],
       "Next": "DuplicateForResource"
     },
 
@@ -203,6 +234,7 @@
       "Resource": "${notifier_arn}",
       "Parameters": {
         "mode": "success",
+        "execution_arn.$": "$$.Execution.Id",
         "state.$": "$"
       },
       "ResultPath": "$.notify",
@@ -244,6 +276,7 @@
       "Resource": "${notifier_arn}",
       "Parameters": {
         "mode": "warning",
+        "execution_arn.$": "$$.Execution.Id",
         "state.$": "$"
       },
       "ResultPath": null,
@@ -268,7 +301,7 @@
       "Parameters": {
         "TableName": "${table_name}",
         "Key": {
-          "finding_id": {"S.$": "$.envelope.finding_id"}
+          "finding_id": {"S.$": "$.envelope.occurrence_id"}
         },
         "UpdateExpression": "SET #s = :failed, failed_at = :t, error_name = :e, error_cause = :c",
         "ExpressionAttributeNames": {"#s": "status"},
@@ -310,7 +343,7 @@
         },
         "ConditionExpression": "owner_finding_id = :me",
         "ExpressionAttributeValues": {
-          ":me": {"S.$": "$.envelope.finding_id"}
+          ":me": {"S.$": "$.envelope.occurrence_id"}
         }
       },
       "ResultPath": null,
@@ -330,6 +363,7 @@
       "Resource": "${notifier_arn}",
       "Parameters": {
         "mode": "failure",
+        "execution_arn.$": "$$.Execution.Id",
         "state.$": "$"
       },
       "ResultPath": null,

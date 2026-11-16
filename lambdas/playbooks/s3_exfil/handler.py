@@ -141,6 +141,7 @@ def chain_to_iam(sfn, envelope, rec):
         "account": envelope["account"],
         "region": envelope["region"],
         "chained_from": envelope["finding_id"],
+        "finding_updated": envelope.get("finding_updated"),
         "resources": [{
             "Type": "AwsIamAccessKey",
             "Id": f"AWS::IAM::AccessKey:{actor.get('access_key_id') or 'unknown'}",

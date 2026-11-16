@@ -105,7 +105,7 @@ def test_resource_lock_follows_finding_guard(definition):
     assert "lock_until < :now" in lock["Parameters"]["ConditionExpression"]
     assert lock["Catch"][0]["ErrorEquals"] == ["DynamoDB.ConditionalCheckFailedException"]
     assert lock["Catch"][0]["Next"] == "MarkDuplicate"
-    assert states["MarkDuplicate"]["Next"] == "DuplicateForResource"
+    assert states["MarkDuplicate"]["Next"] == "ResolveDuplicateFinding"
 
 
 def test_failure_path_releases_only_its_own_lock(definition):
@@ -128,3 +128,16 @@ def test_validator_adds_resource_lock():
     # Comparable as a string with $$.State.EnteredTime (e.g. 2026-11-16T20:47:25.818Z)
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
     assert lock["until"] > now
+
+
+def test_notifier_calls_carry_the_execution_arn(definition):
+    for name in ("Notify", "NotifyFailure", "NotifyLateEvidenceFailure"):
+        assert definition["States"][name]["Parameters"]["execution_arn.$"] == "$$.Execution.Id", name
+
+
+def test_incident_and_lock_keys_use_the_occurrence(definition):
+    states = definition["States"]
+    assert states["RecordIncident"]["Parameters"]["Item"]["finding_id"] == {"S.$": "$.envelope.occurrence_id"}
+    assert states["LockResource"]["Parameters"]["ExpressionAttributeValues"][":me"] == {"S.$": "$.envelope.occurrence_id"}
+    assert states["MarkDuplicate"]["Next"] == "ResolveDuplicateFinding"
+    assert states["ResolveDuplicateFinding"]["Next"] == "DuplicateForResource"

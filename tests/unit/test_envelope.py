@@ -19,16 +19,21 @@ def test_iam_envelope_normalizes_target():
         "arn": "arn:aws:iam::111122223333:user/argus-sim-backdoor",
         "access_key_id": "AKIAEXAMPLEKEY000001",
     }
-    assert env["incident_id"] == env["finding_id"]
+    assert env["incident_id"] == env["occurrence_id"] == f"{env['finding_id']}#{env['finding_created']}"
     assert env["severity"] == "MEDIUM"
 
 
-def test_incident_key_comes_from_finding_id_not_event_id():
+def test_incident_key_ignores_redelivery_but_not_recurrence():
     raw = load_event("iam_transformer_input.json")
     first = build_envelope(raw, "iam")
     raw["event_id"] = "a-different-delivery-of-the-same-finding"
     second = build_envelope(raw, "iam")
-    assert first["incident_key"] == second["incident_key"] == incident_key_for(raw["finding_id"])
+    assert first["incident_key"] == second["incident_key"] == incident_key_for(first["occurrence_id"])
+    # GuardDuty updates the SAME finding when activity recurs: that is a new occurrence.
+    raw["finding_updated"] = "2026-11-21T09:00:00Z"
+    third = build_envelope(raw, "iam")
+    assert third["finding_id"] == first["finding_id"]
+    assert third["incident_key"] != first["incident_key"]
     assert len(first["incident_key"]) == 16
 
 
