@@ -1,0 +1,26 @@
+# Copy to terraform.tfvars (git-ignored) and adjust.
+
+region = "us-east-1"
+
+# Your VPN/proxy egress IP(s). Calls from these IPs trigger the ".Custom" findings.
+threat_list_ips = ["203.0.113.10"]
+
+# SNS escalation + budget alarm. Confirm the SNS subscription email after apply.
+alert_email        = "you@example.com"
+monthly_budget_usd = 20
+
+# Severity at or above which incidents also email you (simulations are MEDIUM/HIGH).
+escalation_min_severity = "HIGH"
+
+# Evidence Object Lock. COMPLIANCE makes the evidence bucket undeletable until retention ends.
+evidence_lock_mode = "GOVERNANCE"
+evidence_lock_days = 1
+
+# Reuse what your account already has (only one of each per region is allowed):
+# create_guardduty_detector      = false
+# existing_guardduty_detector_id = "0123456789abcdef0123456789abcdef"
+# enable_security_hub            = false
+# create_config_recorder         = false
+
+# Optional SSH to the simulation instance (default: Session Manager only).
+# operator_cidr = "198.51.100.7/32"
