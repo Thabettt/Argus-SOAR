@@ -1,0 +1,4 @@
+# Local development and tests only. Lambdas use the boto3 bundled with the runtime.
+boto3>=1.35
+moto[all]>=5.0
+pytest>=8.0
