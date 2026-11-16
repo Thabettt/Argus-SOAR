@@ -33,3 +33,15 @@ output "backdoor_key_parameter" {
 output "exfil_key_parameter" {
   value = aws_ssm_parameter.exfil_key.name
 }
+
+output "instance_sg_id" {
+  value = aws_security_group.instance.id
+}
+
+output "instance_profile_name" {
+  value = aws_iam_instance_profile.instance.name
+}
+
+output "instance_role_name" {
+  value = aws_iam_role.instance.name
+}
