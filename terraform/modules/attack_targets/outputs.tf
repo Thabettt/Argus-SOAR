@@ -1,0 +1,35 @@
+output "instance_id" {
+  value = aws_instance.miner.id
+}
+
+output "instance_arn" {
+  value = aws_instance.miner.arn
+}
+
+output "instance_role_arn" {
+  value = aws_iam_role.instance.arn
+}
+
+output "backdoor_user_name" {
+  value = aws_iam_user.backdoor.name
+}
+
+output "exfil_user_name" {
+  value = aws_iam_user.exfil.name
+}
+
+output "data_bucket" {
+  value = aws_s3_bucket.data.id
+}
+
+output "data_bucket_arn" {
+  value = aws_s3_bucket.data.arn
+}
+
+output "backdoor_key_parameter" {
+  value = aws_ssm_parameter.backdoor_key.name
+}
+
+output "exfil_key_parameter" {
+  value = aws_ssm_parameter.exfil_key.name
+}

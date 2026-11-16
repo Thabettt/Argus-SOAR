@@ -46,3 +46,40 @@ variable "create_config_recorder" {
   type        = bool
   default     = true
 }
+
+# ------------------------------------------------------------ storage, alerts, cost
+
+variable "alert_email" {
+  description = "Email for SNS escalation and the budget alarm (confirm the SNS subscription email). Empty = none."
+  type        = string
+  default     = ""
+}
+
+variable "monthly_budget_usd" {
+  type    = number
+  default = 20
+}
+
+variable "evidence_lock_mode" {
+  description = "GOVERNANCE for dev (can be bypassed and torn down); COMPLIANCE only for a demo you accept keeping."
+  type        = string
+  default     = "GOVERNANCE"
+}
+
+variable "evidence_lock_days" {
+  type    = number
+  default = 1
+}
+
+# ------------------------------------------------------------ attack targets
+
+variable "operator_cidr" {
+  description = "Optional CIDR allowed to SSH to the simulation instance. Empty = Session Manager only."
+  type        = string
+  default     = ""
+}
+
+variable "sim_instance_type" {
+  type    = string
+  default = "t3.micro"
+}

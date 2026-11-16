@@ -90,3 +90,50 @@ module "security_hub" {
   source = "./modules/security_hub"
   enable = var.enable_security_hub
 }
+
+# ------------------------------------------------------------ storage, alerts, cost
+
+module "evidence_bucket" {
+  source      = "./modules/evidence_bucket"
+  prefix      = local.prefix
+  account_id  = local.account_id
+  region      = local.region
+  kms_key_arn = module.kms.evidence_key_arn
+  lock_mode   = var.evidence_lock_mode
+  lock_days   = var.evidence_lock_days
+}
+
+module "dynamodb" {
+  source = "./modules/dynamodb"
+  prefix = local.prefix
+}
+
+module "sns" {
+  source      = "./modules/sns"
+  prefix      = local.prefix
+  alert_email = var.alert_email
+}
+
+module "budget" {
+  source      = "./modules/budget"
+  prefix      = local.prefix
+  limit_usd   = var.monthly_budget_usd
+  alert_email = var.alert_email
+}
+
+# ------------------------------------------------------------ app side: attack targets
+
+module "attack_targets" {
+  source           = "./modules/attack_targets"
+  prefix           = local.prefix
+  account_id       = local.account_id
+  region           = local.region
+  partition        = local.partition
+  managed_tags     = local.managed_tags
+  vpc_id           = module.vpc.vpc_id
+  public_subnet_id = module.vpc.public_subnet_id
+  instance_type    = var.sim_instance_type
+  operator_cidr    = var.operator_cidr
+  sim_data_bucket  = local.sim_data_bucket
+  ssm_kms_key_arn  = module.kms.ssm_key_arn
+}
