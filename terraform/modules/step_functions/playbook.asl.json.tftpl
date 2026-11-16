@@ -1,0 +1,263 @@
+{
+  "Comment": "Argus ${playbook} playbook: Validate -> RecordIncident -> Preserve -> Contain -> Eradicate -> Package -> Finalize -> Notify -> (wait) -> CollectLateEvidence",
+  "StartAt": "ValidateFinding",
+  "States": {
+    "ValidateFinding": {
+      "Type": "Task",
+      "Resource": "${validator_arn}",
+      "Parameters": {
+        "playbook": "${playbook}",
+        "finding.$": "$"
+      },
+      "ResultSelector": {
+        "envelope.$": "$"
+      },
+      "ResultPath": "$",
+      "TimeoutSeconds": 30,
+      "Retry": [${lambda_retry}],
+      "Next": "RecordIncident"
+    },
+
+    "RecordIncident": {
+      "Type": "Task",
+      "Comment": "Atomic idempotency guard: the check and the write are one conditional PutItem.",
+      "Resource": "arn:aws:states:::dynamodb:putItem",
+      "Parameters": {
+        "TableName": "${table_name}",
+        "Item": {
+          "finding_id": {"S.$": "$.envelope.finding_id"},
+          "incident_key": {"S.$": "$.envelope.incident_key"},
+          "status": {"S": "IN_PROGRESS"},
+          "playbook": {"S": "${playbook}"},
+          "finding_type": {"S.$": "$.envelope.finding_type"},
+          "severity": {"S.$": "$.envelope.severity"},
+          "target_arn": {"S.$": "$.envelope.target.arn"},
+          "started_at": {"S.$": "$$.State.EnteredTime"},
+          "execution_arn": {"S.$": "$$.Execution.Id"}
+        },
+        "ConditionExpression": "attribute_not_exists(finding_id) OR #s = :failed",
+        "ExpressionAttributeNames": {"#s": "status"},
+        "ExpressionAttributeValues": {":failed": {"S": "FAILED"}}
+      },
+      "ResultPath": null,
+      "TimeoutSeconds": 20,
+      "Retry": [
+        {
+          "ErrorEquals": ["DynamoDB.ProvisionedThroughputExceededException", "DynamoDB.ThrottlingException", "DynamoDB.InternalServerErrorException"],
+          "IntervalSeconds": 1,
+          "BackoffRate": 2,
+          "MaxAttempts": 3
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["DynamoDB.ConditionalCheckFailedException"],
+          "ResultPath": null,
+          "Next": "AlreadyHandled"
+        }
+      ],
+      "Next": "PreserveEvidence"
+    },
+
+    "AlreadyHandled": {
+      "Type": "Succeed",
+      "Comment": "Another execution already handled (or is handling) this finding."
+    },
+
+    "PreserveEvidence": {
+      "Type": "Task",
+      "Resource": "${forensics_arn}",
+      "Parameters": {
+        "envelope.$": "$.envelope"
+      },
+      "ResultPath": "$.evidence",
+      "TimeoutSeconds": 150,
+      "Retry": [${lambda_retry}],
+      "Catch": [${catch_to_failed}],
+      "Next": "Contain"
+    },
+
+    "Contain": {
+      "Type": "Task",
+      "Resource": "${playbook_arn}",
+      "Parameters": {
+        "phase": "contain",
+        "envelope.$": "$.envelope",
+        "evidence.$": "$.evidence"
+      },
+      "ResultPath": "$.containment",
+      "TimeoutSeconds": 90,
+      "Retry": [${lambda_retry}],
+      "Catch": [${catch_to_failed}],
+      "Next": "Eradicate"
+    },
+
+    "Eradicate": {
+      "Type": "Task",
+      "Resource": "${playbook_arn}",
+      "Parameters": {
+        "phase": "eradicate",
+        "envelope.$": "$.envelope",
+        "evidence.$": "$.evidence"
+      },
+      "ResultPath": "$.eradication",
+      "TimeoutSeconds": 90,
+      "Retry": [${lambda_retry}],
+      "Catch": [${catch_to_failed}],
+      "Next": "PackageEvidence"
+    },
+
+    "PackageEvidence": {
+      "Type": "Task",
+      "Resource": "${package_arn}",
+      "Parameters": {
+        "state.$": "$"
+      },
+      "ResultPath": "$.package",
+      "TimeoutSeconds": 60,
+      "Retry": [${lambda_retry}],
+      "Catch": [${catch_to_failed}],
+      "Next": "Finalize"
+    },
+
+    "Finalize": {
+      "Type": "Task",
+      "Resource": "${finalize_arn}",
+      "Parameters": {
+        "state.$": "$"
+      },
+      "ResultPath": "$.finalize",
+      "TimeoutSeconds": 30,
+      "Retry": [${lambda_retry}],
+      "Catch": [${catch_to_failed}],
+      "Next": "Notify"
+    },
+
+    "Notify": {
+      "Type": "Task",
+      "Resource": "${notifier_arn}",
+      "Parameters": {
+        "mode": "success",
+        "state.$": "$"
+      },
+      "ResultPath": "$.notify",
+      "TimeoutSeconds": 30,
+      "Retry": [${lambda_retry}],
+      "Catch": [${catch_to_failed}],
+      "Next": "WaitForLateLogs"
+    },
+
+    "WaitForLateLogs": {
+      "Type": "Wait",
+      "Comment": "CloudTrail (5-15 min) and Flow Logs (~10 min) arrive late.",
+      "Seconds": ${late_evidence_wait_seconds},
+      "Next": "CollectLateEvidence"
+    },
+
+    "CollectLateEvidence": {
+      "Type": "Task",
+      "Resource": "${late_evidence_arn}",
+      "Parameters": {
+        "state.$": "$"
+      },
+      "ResultPath": "$.late",
+      "TimeoutSeconds": 330,
+      "Retry": [${lambda_retry}],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.late_error",
+          "Next": "NotifyLateEvidenceFailure"
+        }
+      ],
+      "Next": "Done"
+    },
+
+    "NotifyLateEvidenceFailure": {
+      "Type": "Task",
+      "Comment": "The incident is contained; only the supplemental evidence is missing.",
+      "Resource": "${notifier_arn}",
+      "Parameters": {
+        "mode": "warning",
+        "state.$": "$"
+      },
+      "ResultPath": null,
+      "TimeoutSeconds": 30,
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": null,
+          "Next": "Done"
+        }
+      ],
+      "Next": "Done"
+    },
+
+    "Done": {
+      "Type": "Succeed"
+    },
+
+    "MarkFailed": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "${table_name}",
+        "Key": {
+          "finding_id": {"S.$": "$.envelope.finding_id"}
+        },
+        "UpdateExpression": "SET #s = :failed, failed_at = :t, error_name = :e, error_cause = :c",
+        "ExpressionAttributeNames": {"#s": "status"},
+        "ExpressionAttributeValues": {
+          ":failed": {"S": "FAILED"},
+          ":t": {"S.$": "$$.State.EnteredTime"},
+          ":e": {"S.$": "$.error.Error"},
+          ":c": {"S.$": "$.error.Cause"}
+        }
+      },
+      "ResultPath": null,
+      "TimeoutSeconds": 20,
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 1,
+          "BackoffRate": 2,
+          "MaxAttempts": 3
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.mark_failed_error",
+          "Next": "NotifyFailure"
+        }
+      ],
+      "Next": "NotifyFailure"
+    },
+
+    "NotifyFailure": {
+      "Type": "Task",
+      "Resource": "${notifier_arn}",
+      "Parameters": {
+        "mode": "failure",
+        "state.$": "$"
+      },
+      "ResultPath": null,
+      "TimeoutSeconds": 30,
+      "Retry": [${lambda_retry}],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": null,
+          "Next": "RemediationFailed"
+        }
+      ],
+      "Next": "RemediationFailed"
+    },
+
+    "RemediationFailed": {
+      "Type": "Fail",
+      "Error": "ArgusRemediationFailed",
+      "Cause": "A playbook phase failed; see the incident record in DynamoDB and the failure alert."
+    }
+  }
+}

@@ -3,8 +3,10 @@
 Pure function: no AWS calls, so its role needs nothing beyond logging.
 The DynamoDB idempotency write happens next, as a direct Step Functions integration.
 
+Input (from the state machine):
+  {"playbook": "iam" | "ec2" | "s3", "finding": <EventBridge input transformer output>}
+
 Env:
-  PLAYBOOK          iam | ec2 | s3
   SIM_INSTANCE_IDS  comma-separated simulation instance IDs (EC2 scope)
 """
 
@@ -19,10 +21,11 @@ log.setLevel(logging.INFO)
 
 
 def lambda_handler(event, _context):
-    playbook = os.environ["PLAYBOOK"]
+    playbook = event["playbook"]
+    raw = event["finding"]
     sim_ids = {i.strip() for i in os.environ.get("SIM_INSTANCE_IDS", "").split(",") if i.strip()}
 
-    envelope = build_envelope(event, playbook)
+    envelope = build_envelope(raw, playbook)
     check_scope(envelope, sim_ids)
 
     log.info(json.dumps({"msg": "finding accepted", "incident_key": envelope["incident_key"],
