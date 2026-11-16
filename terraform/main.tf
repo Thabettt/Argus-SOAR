@@ -137,3 +137,102 @@ module "attack_targets" {
   sim_data_bucket  = local.sim_data_bucket
   ssm_kms_key_arn  = module.kms.ssm_key_arn
 }
+
+# ------------------------------------------------------------ orchestration
+
+locals {
+  state_machine_arn_prefix = "arn:${local.partition}:states:${local.region}:${local.account_id}:stateMachine:${local.prefix}"
+  iam_state_machine_arn    = "${local.state_machine_arn_prefix}-iam-playbook"
+
+  # The identity running Terraform must stay exempt from the S3 quarantine policy, or
+  # terraform can no longer manage/destroy a quarantined bucket. aws:PrincipalArn is the
+  # role ARN (possibly with a path, e.g. SSO roles), so match any path.
+  caller_arn   = data.aws_caller_identity.current.arn
+  assumed_role = regexall("^arn:[^:]+:sts::[0-9]+:assumed-role/([^/]+)/", local.caller_arn)
+  deployer_arn = length(local.assumed_role) > 0 ? "arn:${local.partition}:iam::${local.account_id}:role/*${local.assumed_role[0][0]}" : local.caller_arn
+  quarantine_exempt = distinct(concat(
+    [module.lambda_roles.remediation_role_arn, module.lambda_roles.auditor_role_arn, local.deployer_arn],
+    var.extra_quarantine_exempt_arns,
+  ))
+}
+
+# Webhook URL placeholder. Set the real Discord webhook URL outside Terraform so the
+# secret never lands in .tfvars or state:
+#   aws ssm put-parameter --name /argus/notifier/webhook-url --type SecureString \
+#     --key-id alias/argus-ssm-key --overwrite --value 'https://discord.com/api/webhooks/...'
+resource "aws_ssm_parameter" "webhook" {
+  name        = "/${local.prefix}/notifier/webhook-url"
+  type        = "SecureString"
+  key_id      = module.kms.ssm_key_arn
+  value       = "disabled"
+  description = "Discord webhook URL for Argus alerts ('disabled' skips the webhook)"
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+module "lambda_roles" {
+  source                    = "./modules/lambda_roles"
+  prefix                    = local.prefix
+  account_id                = local.account_id
+  region                    = local.region
+  partition                 = local.partition
+  evidence_bucket_arn       = module.evidence_bucket.bucket_arn
+  evidence_key_arn          = module.kms.evidence_key_arn
+  ssm_key_arn               = module.kms.ssm_key_arn
+  cloudtrail_key_arn        = module.kms.cloudtrail_key_arn
+  cloudtrail_bucket_arn     = module.cloudtrail.log_bucket_arn
+  athena_workgroup_arn      = module.athena.workgroup_arn
+  athena_results_bucket_arn = module.athena.results_bucket_arn
+  athena_database           = module.athena.database
+  flow_log_group_arn        = module.vpc_flow_logs.log_group_arn
+  incidents_table_arn       = module.dynamodb.table_arn
+  sns_topic_arn             = module.sns.topic_arn
+  webhook_parameter_arn     = aws_ssm_parameter.webhook.arn
+  untrack_sg_arn            = module.quarantine_sg.untrack_sg_arn
+  isolate_sg_arn            = module.quarantine_sg.isolate_sg_arn
+  iam_state_machine_arn     = local.iam_state_machine_arn
+}
+
+module "lambdas" {
+  source                           = "./modules/lambdas"
+  prefix                           = local.prefix
+  role_arns                        = module.lambda_roles.lambda_role_arns
+  evidence_bucket                  = module.evidence_bucket.bucket
+  evidence_key_arn                 = module.kms.evidence_key_arn
+  forensics_role_arn               = module.lambda_roles.forensics_role_arn
+  remediation_role_arn             = module.lambda_roles.remediation_role_arn
+  sim_instance_ids                 = [module.attack_targets.instance_id]
+  untrack_sg_id                    = module.quarantine_sg.untrack_sg_id
+  isolate_sg_id                    = module.quarantine_sg.isolate_sg_id
+  quarantine_exempt_principal_arns = local.quarantine_exempt
+  iam_state_machine_arn            = local.iam_state_machine_arn
+  incidents_table                  = module.dynamodb.table_name
+  webhook_parameter_name           = aws_ssm_parameter.webhook.name
+  sns_topic_arn                    = module.sns.topic_arn
+  escalation_min_severity          = var.escalation_min_severity
+  flow_log_group_name              = module.vpc_flow_logs.log_group_name
+  athena_workgroup                 = module.athena.workgroup
+  athena_database                  = module.athena.database
+  athena_table                     = module.athena.table
+}
+
+module "step_functions" {
+  source                     = "./modules/step_functions"
+  prefix                     = local.prefix
+  account_id                 = local.account_id
+  function_arns              = module.lambdas.function_arns
+  incidents_table            = module.dynamodb.table_name
+  incidents_table_arn        = module.dynamodb.table_arn
+  late_evidence_wait_seconds = var.late_evidence_wait_seconds
+}
+
+module "eventbridge" {
+  source             = "./modules/eventbridge"
+  prefix             = local.prefix
+  account_id         = local.account_id
+  state_machine_arns = module.step_functions.state_machine_arns
+  sim_instance_arn   = module.attack_targets.instance_arn
+  sim_bucket_arn     = module.attack_targets.data_bucket_arn
+}

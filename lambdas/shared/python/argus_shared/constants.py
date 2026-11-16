@@ -1,5 +1,7 @@
 """Names and values shared by all Argus functions."""
 
+import os
+
 MANAGED_TAG_KEY = "argus:managed"
 MANAGED_TAG_VALUE = "true"
 STATUS_TAG_KEY = "argus:status"
@@ -7,7 +9,8 @@ INCIDENT_TAG_KEY = "argus:incident_key"
 QUARANTINE_TIME_TAG_KEY = "argus:quarantine_time"
 QUARANTINED = "QUARANTINED"
 
-SIM_NAME_PREFIX = "argus-sim-"
+# Set by Terraform from name_prefix, so code and IAM scoping always agree.
+SIM_NAME_PREFIX = os.environ.get("SIM_NAME_PREFIX", "argus-sim-")
 
 DENY_ALL_POLICY_ARN = "arn:aws:iam::aws:policy/AWSDenyAll"
 REVOKE_SESSIONS_POLICY_NAME = "ArgusRevokeOlderSessions"

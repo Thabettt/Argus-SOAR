@@ -83,3 +83,27 @@ variable "sim_instance_type" {
   type    = string
   default = "t3.micro"
 }
+
+# ------------------------------------------------------------ orchestration
+
+variable "escalation_min_severity" {
+  description = "Incidents at or above this severity also go to SNS email. None of the simulations is CRITICAL; use HIGH to demo escalation."
+  type        = string
+  default     = "HIGH"
+  validation {
+    condition     = contains(["LOW", "MEDIUM", "HIGH", "CRITICAL"], var.escalation_min_severity)
+    error_message = "Must be LOW, MEDIUM, HIGH or CRITICAL."
+  }
+}
+
+variable "extra_quarantine_exempt_arns" {
+  description = "Extra principal ARNs (patterns allowed) exempt from the S3 quarantine policy. The identity running Terraform is added automatically."
+  type        = list(string)
+  default     = []
+}
+
+variable "late_evidence_wait_seconds" {
+  description = "Wait before CollectLateEvidence (CloudTrail and Flow Logs arrive 5-15 minutes late)."
+  type        = number
+  default     = 900
+}
