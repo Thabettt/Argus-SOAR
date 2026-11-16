@@ -204,7 +204,7 @@ def success_message(state, links):
         f"          {target['arn']}",
         "",
         "TIMELINE",
-        f"  Detected by GuardDuty   {hhmmss(env.get('finding_created'))}",
+        f"  Detected by GuardDuty   {hhmmss(env.get('finding_updated') or env.get('finding_created'))}",
         f"  Received by Argus       {hhmmss(env.get('event_received'))}   (detection took {duration(latency)})",
         f"  Contained               {hhmmss(containment.get('completed_at'))}   ({duration(ttc)} after receipt)",
         "",
@@ -335,7 +335,7 @@ def post_webhook(msg) -> bool:
 def write_runbook(state) -> str:
     env, pkg = state["envelope"], state.get("package") or {}
     timeline = [
-        (env.get("finding_created"), "Finding created by GuardDuty"),
+        (env.get("finding_updated") or env.get("finding_created"), "Detected by GuardDuty"),
         (env.get("event_received"), "Received by Argus (EventBridge)"),
         ((state.get("evidence") or {}).get("completed_at"), "Evidence preserved"),
         ((state.get("containment") or {}).get("completed_at"), "Containment complete"),

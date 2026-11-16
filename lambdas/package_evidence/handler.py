@@ -28,8 +28,12 @@ def build_bundle(state: dict, pre_containment: dict | None) -> dict:
         for action in phase.get("actions", []):
             actions.append({"phase": phase.get("phase"), **action})
 
+    # Detection is measured from THIS occurrence: for a recurring finding, GuardDuty's
+    # UpdatedAt, not when the finding was first created.
+    observed = envelope.get("finding_updated") or envelope["finding_created"]
     timestamps = {
         "finding_created": envelope["finding_created"],
+        "finding_updated": observed,
         "event_received": envelope["event_received"],
         "evidence_start": evidence.get("started_at"),
         "containment_start": containment.get("started_at"),
@@ -39,8 +43,7 @@ def build_bundle(state: dict, pre_containment: dict | None) -> dict:
     if containment.get("completed_at"):
         timestamps["time_to_contain_seconds"] = au.seconds_between(
             envelope["event_received"], containment["completed_at"])
-    timestamps["detection_latency_seconds"] = au.seconds_between(
-        envelope["finding_created"], envelope["event_received"])
+    timestamps["detection_latency_seconds"] = au.seconds_between(observed, envelope["event_received"])
 
     return {
         "schema": "argus.evidence.v1",

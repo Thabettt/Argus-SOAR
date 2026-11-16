@@ -166,3 +166,11 @@ def test_success_email_has_timeline_actions_and_links(state):
     assert "1. Attached AWSDenyAll to argus-sim-backdoor" in msg["text"]
     assert "states/home?region=us-east-1#/v2/executions/details/arn:aws:states" in msg["text"]
     assert "guardduty/home?region=us-east-1#/findings" in msg["text"]
+
+
+def test_detection_latency_uses_this_occurrence(state):
+    """A recurring finding keeps its CreatedAt; latency must come from UpdatedAt."""
+    state["envelope"]["finding_created"] = "2026-11-20T10:00:00Z"
+    state["envelope"]["finding_updated"] = "2026-11-20T14:02:00Z"
+    bundle = load_handler("package_evidence").build_bundle(state, None)
+    assert bundle["timestamps"]["detection_latency_seconds"] == 72.0  # 14:02:00 -> 14:03:12
