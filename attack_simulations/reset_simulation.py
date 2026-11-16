@@ -57,6 +57,8 @@ def reset_iam(session, out):
         reset_user(iam, user)
         release_lock(session, out, f"arn:aws:iam::{account}:user/{user}")
     reset_role(iam, out["sim_instance_role_name"])
+    if out.get("sim_app_role_arn"):
+        reset_role(iam, out["sim_app_role_arn"].split("/")[-1])
 
 
 def reset_ec2(session, out, start, delete_snapshots):
