@@ -1,17 +1,19 @@
 """Playbook 2 - EC2 crypto-mining. Runs as the app-side remediation role.
 
 contain:
-  1. for EACH network interface: swap to the allow-all "untrack" group, then to the
-     empty "isolate" group. Changing security groups does not cut connections that
-     are already tracked; the allow-all group makes them untracked first, so the
-     isolate group then drops them.
-  2. disassociate the instance profile and add an aws:TokenIssueTime deny to the
+  1. for EACH network interface: swap to the empty "isolate" group. This blocks every
+     NEW connection, but security groups are stateful: connections that already exist
+     stay up (verified live, including with the "allow-all first" untrack trick).
+  2. if the subnet is tagged argus:dedicated-subnet=true, put it behind the deny-all
+     quarantine NACL. NACLs are stateless, so this cuts live connections within seconds
+     (verified live). On shared subnets this is skipped: the stop in Eradicate ends them.
+  3. disassociate the instance profile and add an aws:TokenIssueTime deny to the
      instance role (credentials stolen from IMDS keep working from anywhere otherwise)
-  3. enable termination protection, tag QUARANTINED
+  4. enable termination protection, tag QUARANTINED
 eradicate:
   stop the instance (memory is lost - documented trade-off; disks were snapshotted)
 
-Env: REMEDIATION_ROLE_ARN, UNTRACK_SG_ID, ISOLATE_SG_ID
+Env: REMEDIATION_ROLE_ARN, ISOLATE_SG_ID, ISOLATE_NACL_ID
 """
 
 from __future__ import annotations
@@ -51,16 +53,15 @@ def contain(ec2, iam, envelope, evidence):
     rec = PhaseRecorder("contain")
     instance_id = envelope["target"]["id"]
     summary = evidence.get("summary") or {}
-    untrack_sg = os.environ["UNTRACK_SG_ID"]
     isolate_sg = os.environ["ISOLATE_SG_ID"]
 
     enis = summary.get("enis") or _current_enis(ec2, instance_id)
     for eni in enis:
         eni_id = eni["eni_id"]
-        ec2.modify_network_interface_attribute(NetworkInterfaceId=eni_id, Groups=[untrack_sg])
-        rec.record("ec2:ModifyNetworkInterfaceAttribute", eni_id, detail={"groups": [untrack_sg], "step": "untrack"})
         ec2.modify_network_interface_attribute(NetworkInterfaceId=eni_id, Groups=[isolate_sg])
         rec.record("ec2:ModifyNetworkInterfaceAttribute", eni_id, detail={"groups": [isolate_sg], "step": "isolate"})
+
+    quarantine_subnet(ec2, summary.get("subnet"), rec)
 
     association = summary.get("instance_profile_association")
     if association:
@@ -95,6 +96,27 @@ def contain(ec2, iam, envelope, evidence):
     ])
     rec.record("ec2:CreateTags", instance_id, detail=QUARANTINED)
     return rec.result()
+
+
+def quarantine_subnet(ec2, subnet, rec):
+    """Stateless NACL isolation: the only network control that ends live connections."""
+    if not subnet:
+        return
+    subnet_id = subnet["subnet_id"]
+    if not subnet.get("dedicated"):
+        rec.record("ec2:ReplaceNetworkAclAssociation", subnet_id, "skipped",
+                   "shared subnet; live connections end when the instance is stopped")
+        return
+    nacl_id = os.environ["ISOLATE_NACL_ID"]
+    acls = ec2.describe_network_acls(
+        Filters=[{"Name": "association.subnet-id", "Values": [subnet_id]}])["NetworkAcls"]
+    assoc = next(a for a in acls[0]["Associations"] if a["SubnetId"] == subnet_id)
+    if acls[0]["NetworkAclId"] == nacl_id:
+        rec.record("ec2:ReplaceNetworkAclAssociation", subnet_id, "skipped", "already quarantined")
+        return
+    ec2.replace_network_acl_association(AssociationId=assoc["NetworkAclAssociationId"], NetworkAclId=nacl_id)
+    rec.record("ec2:ReplaceNetworkAclAssociation", subnet_id,
+               detail={"nacl": nacl_id, "original_nacl": subnet.get("original_nacl_id")})
 
 
 def eradicate(ec2, envelope):

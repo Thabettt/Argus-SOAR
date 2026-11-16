@@ -144,6 +144,19 @@ def collect_ec2(session, envelope, rec):
         for ni in instance.get("NetworkInterfaces", [])
     ]
 
+    # The subnet and its NACL, recorded before containment so recovery can restore it.
+    subnet = None
+    subnet_id = instance.get("SubnetId")
+    if subnet_id:
+        sn = ec2.describe_subnets(SubnetIds=[subnet_id])["Subnets"][0]
+        tags = {t["Key"]: t["Value"] for t in sn.get("Tags", [])}
+        acls = ec2.describe_network_acls(
+            Filters=[{"Name": "association.subnet-id", "Values": [subnet_id]}])["NetworkAcls"]
+        nacl_id = acls[0]["NetworkAclId"] if acls else None
+        subnet = {"subnet_id": subnet_id, "dedicated": tags.get("argus:dedicated-subnet") == "true",
+                  "original_nacl_id": nacl_id}
+    rec.record("ec2:DescribeSubnets", subnet_id or "none", detail=subnet)
+
     association = None
     instance_role = None
     assocs = ec2.describe_iam_instance_profile_associations(
@@ -171,6 +184,7 @@ def collect_ec2(session, envelope, rec):
         "network_interfaces": enis,
         "instance_profile_association": association,
         "instance_role_arn": instance_role,
+        "subnet": subnet,
         "ebs_snapshots": snapshots,
         "note": "Volatile memory is not captured (documented limitation).",
     }
@@ -178,6 +192,7 @@ def collect_ec2(session, envelope, rec):
         "enis": enis,
         "instance_profile_association": association,
         "instance_role_arn": instance_role,
+        "subnet": subnet,
         "snapshot_ids": [s["snapshot_id"] for s in snapshots],
     }
     return snapshot, summary

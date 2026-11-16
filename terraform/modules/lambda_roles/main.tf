@@ -228,7 +228,7 @@ resource "aws_iam_role_policy" "forensics" {
         Sid    = "Ec2Describe"
         Effect = "Allow"
         Action = ["ec2:DescribeInstances", "ec2:DescribeVolumes", "ec2:DescribeSnapshots",
-        "ec2:DescribeIamInstanceProfileAssociations"]
+        "ec2:DescribeIamInstanceProfileAssociations", "ec2:DescribeSubnets", "ec2:DescribeNetworkAcls"]
         Resource = "*"
       },
       {
@@ -329,10 +329,19 @@ resource "aws_iam_role_policy" "remediation" {
         Condition = { StringEquals = local.managed }
       },
       {
-        Sid      = "OnlyQuarantineGroups"
+        Sid      = "OnlyQuarantineGroup"
         Effect   = "Allow"
         Action   = "ec2:ModifyNetworkInterfaceAttribute"
-        Resource = [var.untrack_sg_arn, var.isolate_sg_arn]
+        Resource = var.isolate_sg_arn
+      },
+      {
+        # Swapping a subnet's NACL association: limited to NACLs in the Argus VPC. The
+        # playbook only does this for subnets tagged argus:dedicated-subnet=true.
+        Sid       = "QuarantineDedicatedSubnet"
+        Effect    = "Allow"
+        Action    = "ec2:ReplaceNetworkAclAssociation"
+        Resource  = "arn:${local.p}:ec2:${var.region}:${local.acct}:network-acl/*"
+        Condition = { ArnEquals = { "ec2:Vpc" = "arn:${local.p}:ec2:${var.region}:${local.acct}:vpc/${var.vpc_id}" } }
       },
       {
         Sid    = "ContainManagedInstances"
@@ -343,9 +352,10 @@ resource "aws_iam_role_policy" "remediation" {
         Condition = { StringEquals = local.managed }
       },
       {
-        Sid      = "DescribeInstances"
-        Effect   = "Allow"
-        Action   = ["ec2:DescribeInstances", "ec2:DescribeIamInstanceProfileAssociations"]
+        Sid    = "DescribeInstances"
+        Effect = "Allow"
+        Action = ["ec2:DescribeInstances", "ec2:DescribeIamInstanceProfileAssociations", "ec2:DescribeSubnets",
+        "ec2:DescribeNetworkAcls"]
         Resource = "*"
       },
       # ---- S3 playbook: simulation buckets only (by name)

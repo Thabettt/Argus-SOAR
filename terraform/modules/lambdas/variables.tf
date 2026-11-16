@@ -37,7 +37,7 @@ variable "sim_instance_ids" {
   type = list(string)
 }
 
-variable "untrack_sg_id" {
+variable "isolate_nacl_id" {
   type = string
 }
 

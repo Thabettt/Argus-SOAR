@@ -62,7 +62,11 @@ variable "webhook_parameter_arn" {
   type = string
 }
 
-variable "untrack_sg_arn" {
+variable "isolate_nacl_id" {
+  type = string
+}
+
+variable "vpc_id" {
   type = string
 }
 

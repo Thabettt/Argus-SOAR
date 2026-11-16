@@ -168,7 +168,9 @@ resource "aws_ssm_parameter" "webhook" {
   description = "Discord webhook URL for Argus alerts ('disabled' skips the webhook)"
 
   lifecycle {
-    ignore_changes = [value]
+    # The URL is stored by hand (aws ssm put-parameter). Ignoring key_id too: an update
+    # would re-put the parameter with the "disabled" placeholder and switch alerts off.
+    ignore_changes = [value, key_id]
   }
 }
 
@@ -190,7 +192,8 @@ module "lambda_roles" {
   incidents_table_arn       = module.dynamodb.table_arn
   sns_topic_arn             = module.sns.topic_arn
   webhook_parameter_arn     = aws_ssm_parameter.webhook.arn
-  untrack_sg_arn            = module.quarantine_sg.untrack_sg_arn
+  isolate_nacl_id           = module.quarantine_sg.isolate_nacl_id
+  vpc_id                    = module.vpc.vpc_id
   isolate_sg_arn            = module.quarantine_sg.isolate_sg_arn
   iam_state_machine_arn     = local.iam_state_machine_arn
 }
@@ -204,7 +207,7 @@ module "lambdas" {
   forensics_role_arn               = module.lambda_roles.forensics_role_arn
   remediation_role_arn             = module.lambda_roles.remediation_role_arn
   sim_instance_ids                 = [module.attack_targets.instance_id]
-  untrack_sg_id                    = module.quarantine_sg.untrack_sg_id
+  isolate_nacl_id                  = module.quarantine_sg.isolate_nacl_id
   isolate_sg_id                    = module.quarantine_sg.isolate_sg_id
   quarantine_exempt_principal_arns = local.quarantine_exempt
   iam_state_machine_arn            = local.iam_state_machine_arn

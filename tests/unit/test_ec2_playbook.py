@@ -16,10 +16,11 @@ def env(remediation_role):
     iam = boto3.client("iam")
     vpc = ec2.create_vpc(CidrBlock="10.42.0.0/16")["Vpc"]["VpcId"]
     subnet = ec2.create_subnet(VpcId=vpc, CidrBlock="10.42.1.0/24")["Subnet"]["SubnetId"]
+    ec2.create_tags(Resources=[subnet], Tags=[{"Key": "argus:dedicated-subnet", "Value": "true"}])
     open_sg = ec2.create_security_group(GroupName="open", Description="open", VpcId=vpc)["GroupId"]
-    untrack = ec2.create_security_group(GroupName="untrack", Description="u", VpcId=vpc)["GroupId"]
     isolate = ec2.create_security_group(GroupName="isolate", Description="i", VpcId=vpc)["GroupId"]
-    os.environ.update({"UNTRACK_SG_ID": untrack, "ISOLATE_SG_ID": isolate})
+    nacl = ec2.create_network_acl(VpcId=vpc)["NetworkAcl"]["NetworkAclId"]
+    os.environ.update({"ISOLATE_SG_ID": isolate, "ISOLATE_NACL_ID": nacl})
 
     trust = json.dumps({"Version": "2012-10-17", "Statement": [
         {"Effect": "Allow", "Principal": {"Service": "ec2.amazonaws.com"}, "Action": "sts:AssumeRole"}]})
@@ -80,9 +81,13 @@ def test_contain_isolates_every_eni_and_revokes_credentials(env):
         assert isolate in [g["GroupId"] for g in ni["Groups"]]
 
     swaps = [a["detail"] for a in result["actions"] if a["action"] == "ec2:ModifyNetworkInterfaceAttribute"]
-    assert [s["step"] for s in swaps] == ["untrack", "isolate"]  # untrack must come first, or live sessions survive
-    assert swaps[0]["groups"] == [os.environ["UNTRACK_SG_ID"]]
-    assert swaps[-1]["groups"] == [isolate]
+    assert [s["groups"] for s in swaps] == [[isolate]]
+
+    # Security groups don't end existing connections; the stateless NACL on the dedicated subnet does.
+    subnet_id = evidence["summary"]["subnet"]["subnet_id"]
+    acl = ec2.describe_network_acls(Filters=[{"Name": "association.subnet-id", "Values": [subnet_id]}])["NetworkAcls"][0]
+    assert acl["NetworkAclId"] == os.environ["ISOLATE_NACL_ID"]
+    assert evidence["summary"]["subnet"]["original_nacl_id"] != os.environ["ISOLATE_NACL_ID"]
 
     assert ec2.describe_iam_instance_profile_associations(
         Filters=[{"Name": "instance-id", "Values": [instance_id]}, {"Name": "state", "Values": ["associated"]}]
@@ -137,3 +142,18 @@ def test_snapshot_rate_limit_is_retried(env, monkeypatch):
     from argus_shared.phase import PhaseRecorder
     result = forensics._snapshot_once(Flaky(), vol, "key123", env[3], PhaseRecorder("p"))
     assert result["snapshot_id"].startswith("snap-") and calls["n"] == 2
+
+
+
+def test_shared_subnet_is_not_nacl_quarantined(env):
+    ec2 = env[0]
+    evidence = _forensics(env)
+    subnet_id = evidence["summary"]["subnet"]["subnet_id"]
+    ec2.delete_tags(Resources=[subnet_id], Tags=[{"Key": "argus:dedicated-subnet"}])
+    evidence["summary"]["subnet"]["dedicated"] = False
+    result = load_handler("playbooks/ec2_mining").lambda_handler(
+        {"phase": "contain", "envelope": env[2], "evidence": evidence}, None)
+    nacl_action = [a for a in result["actions"] if a["action"] == "ec2:ReplaceNetworkAclAssociation"][0]
+    assert nacl_action["result"] == "skipped"
+    acl = ec2.describe_network_acls(Filters=[{"Name": "association.subnet-id", "Values": [subnet_id]}])["NetworkAcls"][0]
+    assert acl["NetworkAclId"] != os.environ["ISOLATE_NACL_ID"]

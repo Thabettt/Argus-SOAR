@@ -69,6 +69,17 @@ def reset_ec2(session, out, start, delete_snapshots):
                                                Groups=[out["sim_instance_sg_id"]])
     print(f"  {iid}: original security group restored on every ENI")
 
+    # Undo the NACL quarantine: put the subnet back on the VPC's default NACL.
+    subnet_id = instance["SubnetId"]
+    acls = ec2.describe_network_acls(Filters=[{"Name": "association.subnet-id", "Values": [subnet_id]}])["NetworkAcls"]
+    if acls and not acls[0]["IsDefault"]:
+        assoc = next(a for a in acls[0]["Associations"] if a["SubnetId"] == subnet_id)
+        default = ec2.describe_network_acls(Filters=[{"Name": "vpc-id", "Values": [instance["VpcId"]]},
+                                                     {"Name": "default", "Values": ["true"]}])["NetworkAcls"][0]
+        ec2.replace_network_acl_association(AssociationId=assoc["NetworkAclAssociationId"],
+                                            NetworkAclId=default["NetworkAclId"])
+        print(f"  subnet {subnet_id}: back on the default NACL")
+
     assoc = ec2.describe_iam_instance_profile_associations(
         Filters=[{"Name": "instance-id", "Values": [iid]}, {"Name": "state", "Values": ["associated"]}]
     )["IamInstanceProfileAssociations"]

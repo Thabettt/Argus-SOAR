@@ -113,9 +113,8 @@ def describe_action(a: dict) -> str:
         "iam:PutRolePolicy": f"Revoked existing sessions of role {target.split('/')[-1]}",
         "iam:DeleteLoginProfile": f"Removed console password of {target}",
         "iam:TagUser": f"Tagged {target} QUARANTINED",
-        "ec2:ModifyNetworkInterfaceAttribute": (
-            f"Moved {target} to the untrack group (makes live connections droppable)" if step == "untrack"
-            else f"Isolated {target}: no inbound or outbound traffic"),
+        "ec2:ModifyNetworkInterfaceAttribute": f"Isolated {target}: no new inbound or outbound connections",
+        "ec2:ReplaceNetworkAclAssociation": f"Put subnet {target} behind the deny-all NACL (cuts live connections)",
         "ec2:DisassociateIamInstanceProfile": "Detached the instance profile (no new instance credentials)",
         "ec2:ModifyInstanceAttribute": f"Enabled termination protection on {target}",
         "ec2:CreateTags": f"Tagged {target} QUARANTINED",

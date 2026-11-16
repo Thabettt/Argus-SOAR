@@ -47,7 +47,7 @@ locals {
       timeout = 60
       env = {
         REMEDIATION_ROLE_ARN = var.remediation_role_arn
-        UNTRACK_SG_ID        = var.untrack_sg_id
+        ISOLATE_NACL_ID      = var.isolate_nacl_id
         ISOLATE_SG_ID        = var.isolate_sg_id
       }
     }
