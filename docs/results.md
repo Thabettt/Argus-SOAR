@@ -1,7 +1,8 @@
 # Argus — Measured Results
 
 Live results from the deployment in us-east-1 on 2026-11-16 (single account, all three
-scenarios triggered by real GuardDuty findings). Every number below was read back from
+scenarios triggered by real GuardDuty findings), plus a second verification round the same
+night that tested every claim the first round left open. Every number below was read back from
 AWS: Step Functions execution histories, the `argus-incidents` table, the evidence
 bundles in S3, and the AWS APIs named in each check. Account IDs are redacted.
 
@@ -90,7 +91,8 @@ Security Hub emits for Argus's own RESOLVED updates, stopped at the first Dynamo
 | CloudTrail log file validation | ✅ | `aws cloudtrail validate-logs`: 2/2 digest files valid, 49/49 log files valid |
 | S3 data events queryable via Athena | ✅ | 230 data events returned for the S3 incident |
 | VPC Flow Logs collected after containment | ✅ | 461–756 records per EC2 incident |
-| Config rule `s3-bucket-public-read-prohibited` as a second signal | ❌ | Rule deployed but never fired: the optional public-bucket demo needs account-level Block Public Access off, and it wasn't run |
+| Config rule `s3-bucket-public-read-prohibited` as a second signal | ✅ | Flagged the public bucket NON_COMPLIANT in 45 s (first test) and 183 s (second); FAILED finding imported into Security Hub |
+| Config finding triggers containment | ✅ (added in round 2) | The Config finding started the S3 playbook 19 s after Config flagged the bucket: exposure fell from 618 s (GuardDuty only) to 218 s |
 
 ### Routing and orchestration (spec §7–8)
 
@@ -98,7 +100,8 @@ Security Hub emits for Argus's own RESOLVED updates, stopped at the first Dynamo
 |---|---|---|
 | EventBridge patterns match real ASFF findings | ✅ | All four rules fired on real findings; one real event saved as a test fixture |
 | Failure path alerts a human | ✅ | 6 live failures → 6 FAILED emails |
-| Task timeouts route to the failure path | ❌ | Unit-tested template only; no live timeout occurred |
+| Task timeouts route to the failure path | ✅ | Throwaway state machine, real late-evidence Lambda with a 1 s task timeout: `States.Timeout` caught with `ResultPath: $.error`, the same Catch as MarkFailed |
+| A FAILED incident is retried and completes | ✅ | A FAILED EC2 incident re-run after a fix completed every phase |
 | Late evidence 15 minutes later, with its own digest | ✅ | 6 supplemental files, all digests valid |
 
 ### Playbooks (spec §9)
@@ -106,17 +109,17 @@ Security Hub emits for Argus's own RESOLVED updates, stopped at the first Dynamo
 | Claim | Status | Evidence |
 |---|---|---|
 | IAM: deactivate keys + attach AWSDenyAll | ✅ | Both simulation users contained live |
-| IAM: revoke assumed-role sessions (TokenIssueTime) | ❌ live / ✅ unit | Simulation users can't assume roles, so this branch never ran live |
+| IAM: revoke assumed-role sessions (TokenIssueTime) | ✅ | The backdoor user assumed `argus-sim-app-role`; forensics found the `AssumeRole` in CloudTrail; afterwards the attacker's 12-minute-old role session got "explicit deny" |
 | IAM: delete console password | 🟡 | Live runs correctly skipped it (no password set); deletion itself is unit-tested |
-| EC2: untrack → isolate security group swap on every ENI | ✅ applied | Instance ended with only the isolate group every time |
-| EC2: **live connections are actually cut** | ❌ | Not tested: needs a Session Manager shell held open during containment |
-| EC2: instance profile detached + instance-role sessions revoked | 🟡 | Applied live; that previously stolen credentials stop working wasn't tested |
+| EC2: isolate security group on every ENI | ✅ | Blocks new connections. **Does not end existing ones** (see below) |
+| EC2: **live connections are actually cut** | ✅ after a fix | Original claim (untrack → isolate cuts them) was **false**. The deny-all NACL now cuts a live session within ~1–2 s, before the stop takes effect |
+| EC2: instance profile detached + instance-role sessions revoked | ✅ | Role credentials copied from IMDS worked from outside AWS before containment, `AccessDenied` after |
 | EC2: termination protection, stop, forensic snapshot | ✅ | Confirmed after each run; one snapshot per incident |
 | S3: Block Public Access, drop policy, quarantine, versioning | ✅ | Confirmed live; the attacker's 10 later read attempts were all denied |
 | S3: chain into IAM for the calling user | ✅ | `argus-sim-exfil` contained via a chained IAM execution |
 | Evidence bundle + SHA-256 under Object Lock | ✅ | 7/7 digests valid, GOVERNANCE retention on every object |
 | SNS escalation by severity | ✅ | Success emails (MEDIUM and HIGH) and failure emails received |
-| Discord webhook | ❌ | No webhook URL configured |
+| Discord webhook | ✅ | Alert posted to Discord (HTTP 2xx); success and failure embeds received |
 
 ### Security controls (spec §10–11)
 
@@ -131,6 +134,26 @@ Security Hub emits for Argus's own RESOLVED updates, stopped at the first Dynamo
 | Claim | Status | Evidence |
 |---|---|---|
 | "Tens of dollars a month" | ❌ | Cost Explorer had no data yet (it lags up to 24 h). Recheck after a few days |
+
+## Round 2: the live-connection test
+
+A Session Manager session printing a timestamp every 2 s was held open from outside AWS
+while the instance was isolated. No stop happened in phases 1–4, so the network control was
+the only variable.
+
+| Method | Session afterwards |
+|---|---|
+| Swap straight to the empty isolate security group | Survived 75 s+ |
+| Allow-all "untrack" group, then isolate (the v1.1 playbook) | Survived 75 s+ |
+| Untrack, 30 s of traffic, then isolate | Survived 60 s+ |
+| Deny-all NACL on the subnet | **Cut within ~2 s** |
+| Full playbook after the fix (real finding, retried) | NACL at 23:51:20, last line 23:51:21, stop called 23:51:23: cut by the NACL |
+
+Security groups are stateful: a flow tracked when it started stays allowed whatever the
+rules become, and the untrack trick doesn't change that for existing flows. In v1.1 live
+sessions only ended because the instance was then stopped. The playbook now uses a
+pre-provisioned deny-all NACL on subnets tagged `argus:dedicated-subnet=true`; on shared
+subnets it relies on the stop.
 
 ## Defects found by live testing
 
@@ -149,6 +172,24 @@ Unit tests (moto) passed throughout; each of these only appeared against real AW
 5. **Attacker left active on a duplicate.** An admin call won the bucket lock, so the
    finding naming the real attacker was a duplicate and that user was never contained.
    Fix: duplicate S3 findings still chain the IAM playbook for their actor.
+6. **The untrack trick doesn't cut live connections** (round 2). Fix: deny-all NACL on
+   dedicated subnets; untrack group removed (it briefly allowed all traffic).
+7. **NACL step lacked a permission.** `ReplaceNetworkAclAssociation` is also authorized
+   against the subnet. Caught by the failure path (4 alerts). Fix: allow it on subnets
+   tagged as dedicated.
+8. **Failure alert overstated the damage.** It said "NOT contained" when part of the failed
+   step had already run. Fix: it now lists completed phases and warns about partial steps.
+9. **A Terraform change could silently disable alerts.** Updating the webhook parameter's
+   key would have re-put it with the "disabled" placeholder. Fix: ignore that attribute.
+10. **Slow closure of public buckets.** GuardDuty's update took ~10 min to reach Argus
+    while Config knew in under a minute. Fix: route the Config finding (618 s → 218 s).
+
+## Still open
+
+- **Cost:** recheck in Cost Explorer after 24 h.
+- **Teardown:** `terraform destroy` not yet run.
+- Config only re-evaluates on a configuration change it records; after a reset it may need
+  `aws configservice start-config-rules-evaluation` before a repeat test.
 
 ## Resume bullet numbers
 
@@ -156,5 +197,8 @@ Unit tests (moto) passed throughout; each of these only appeared against real AW
   (median 8 s across 6 live incidents).
 - "Detection-to-containment pipeline verified end to end against real GuardDuty findings,
   with 7/7 evidence digests verifiable via `sha256sum`."
-- Don't claim the live-session cut or assumed-role revocation as demonstrated until the
-  ❌ rows above are tested.
+- "Disproved a widely cited isolation technique with a controlled live test and replaced
+  it with stateless NACL isolation, cutting live attacker sessions in ~2 seconds."
+- "Cut public-bucket exposure from 10 minutes to under 4 by adding AWS Config as a
+  second detection path."
+- Assumed-role and stolen instance-credential revocation are now demonstrated live.

@@ -10,10 +10,11 @@ Lock, and notifies a human. Everything is deployed with Terraform.
 | Scenario | GuardDuty finding | Playbook |
 |---|---|---|
 | Leaked IAM access key used from a "malicious" IP | `UnauthorizedAccess:IAMUser/MaliciousIPCaller.Custom` (MEDIUM) | Deactivate keys, attach `AWSDenyAll`, revoke assumed-role sessions, remove console access |
-| Instance resolving crypto-mining pools | `CryptoCurrency:EC2/BitcoinTool.B!DNS` (HIGH) | Untrack-then-isolate security group swap per ENI, revoke instance credentials, snapshot, stop |
+| Instance resolving crypto-mining pools | `CryptoCurrency:EC2/BitcoinTool.B!DNS` (HIGH) | Isolate security group per ENI, deny-all NACL on the dedicated subnet (cuts live sessions), revoke instance credentials, snapshot, stop |
 | Bulk S3 reads from a "malicious" IP | `Discovery:S3/MaliciousIPCaller.Custom` (HIGH) + `Policy:S3/BucketBlockPublicAccessDisabled` (LOW) | Block Public Access on, drop public policy, quarantine policy, versioning, chain into the IAM playbook |
 
-The full design is in [argus_soar_spec.md](argus_soar_spec.md).
+The full design is in [argus_soar_spec.md](argus_soar_spec.md). Measured results, and which
+claims are verified live, are in [docs/results.md](docs/results.md).
 
 ## Architecture
 
@@ -150,3 +151,7 @@ cd terraform && terraform destroy
 - Simulations are Python/boto3 instead of a mix of Python and shell, so they run on
   Windows without the AWS CLI. The EC2 lookups run on the instance through SSM Run Command.
 - `reset_simulation.py` was added for re-runs and clean teardown.
+- Live testing changed the design (details in `docs/results.md`): incidents are keyed per
+  finding occurrence with a per-resource lock; duplicate S3 findings still contain their
+  actor; EC2 live connections are cut with a NACL instead of the untrack trick, which was
+  disproved; the AWS Config finding is routed to the S3 playbook.

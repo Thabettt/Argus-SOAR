@@ -108,7 +108,7 @@ Even if you use a single AWS account, structure your resources as if they are tw
 - Vulnerable EC2 instance
 - Backdoor IAM user
 - Misconfigured S3 bucket
-- "Quarantine" Security Groups (pre-provisioned): `argus-quarantine-untrack` (all traffic allowed in and out, used briefly to make tracked connections untracked) and `argus-quarantine-isolate` (no rules)
+- Quarantine controls (pre-provisioned): `argus-quarantine-isolate`, a security group with no rules (blocks new connections), and `argus-quarantine-nacl`, a network ACL with no rules (cuts existing connections on a dedicated subnet)
 - VPC Flow Logs for the VPC, delivered to CloudWatch Logs
 - `argus-remediation-role`: the role that playbooks assume to change app resources
 
@@ -149,7 +149,7 @@ argus/
 │   │   │   ├── main.tf          # Vulnerable EC2, backdoor IAM, simulation S3 bucket
 │   │   │   └── variables.tf
 │   │   ├── quarantine_sg/
-│   │   │   ├── main.tf          # untrack + isolate security groups
+│   │   │   ├── main.tf          # isolate security group + deny-all quarantine NACL
 │   │   │   └── variables.tf
 │   │   ├── evidence_bucket/
 │   │   │   ├── main.tf          # S3 + Object Lock (mode/retention via variables) + KMS
@@ -331,6 +331,7 @@ EventBridge patterns cannot index arrays (`findings[0]` is not valid in a patter
 | `argus-ec2` | `*CryptoCurrency:EC2-BitcoinTool*` | HIGH | `Resources.Id` = the simulation instance ARN |
 | `argus-s3` | `*Discovery:S3-MaliciousIPCaller*` | HIGH | `Resources.Id` = the simulation bucket ARN |
 | `argus-s3-policy` | `*Policy:S3-BucketBlockPublicAccessDisabled*` | LOW | `Resources.Id` = the simulation bucket ARN (allowed below HIGH only because it is limited to that bucket) |
+| `argus-s3-config` *(v1.2)* | ProductName `Config`, Title `argus-s3-bucket-public-read-prohibited`, Compliance `FAILED` | any | the simulation bucket ARN. Config flags a public bucket in under a few minutes; GuardDuty's update took ~10 min. Measured: exposure 618 s → 218 s |
 
 **Pattern example (EC2):**
 ```json
@@ -525,12 +526,12 @@ Runs as `argus-remediation-role`.
 
 **Phase: Contain**
 1. Take the original security groups for each network interface from `$.evidence` (already saved, so recovery is possible)
-2. For **each** network interface: `ec2:ModifyNetworkInterfaceAttribute(Groups=[argus-quarantine-untrack])`, then `ec2:ModifyNetworkInterfaceAttribute(Groups=[argus-quarantine-isolate])`
-   - **Why two steps:** changing security groups does not cut connections that are already tracked, such as the attacker's open shell. Moving first to a group that allows all traffic to and from `0.0.0.0/0` makes those connections untracked; the isolation group (no rules) then drops them. This follows AWS's EC2 incident response guidance.
-   - Doing this per network interface also covers instances with more than one (`ModifyInstanceAttribute(Groups=…)` only changes the primary one).
-3. `ec2:DisassociateIamInstanceProfile` (association ID taken from evidence), and add the same `aws:TokenIssueTime` revoke-older-sessions deny to the instance role. Credentials stolen from instance metadata stay valid for hours otherwise.
-4. `ec2:ModifyInstanceAttribute(DisableApiTermination=true)` — protect the evidence from deletion
-5. Tag the instance: `argus:status=QUARANTINED`, `argus:incident_key={key}`
+2. For **each** network interface: `ec2:ModifyNetworkInterfaceAttribute(Groups=[argus-quarantine-isolate])`. This blocks every *new* connection. Doing it per network interface also covers instances with more than one (`ModifyInstanceAttribute(Groups=…)` only changes the primary one).
+   - **Security groups do not end existing connections.** They are stateful: a flow that was tracked when it started stays allowed whatever the rules become. *(v1.2, verified live: a Session Manager session survived a direct swap to the empty group, and also the widely cited "swap to an allow-all group first to untrack, then isolate" sequence, even with 30 s of traffic in between. The untrack step was removed; it also briefly allowed all traffic.)*
+3. If the instance's subnet is tagged `argus:dedicated-subnet=true`: `ec2:ReplaceNetworkAclAssociation` to the deny-all `argus-quarantine-nacl`. NACLs are stateless, so this **cuts live connections within about 2 seconds** (verified live). It affects the whole subnet, hence the opt-in tag. On shared subnets it is skipped, and the stop in Eradicate ends live connections instead. Forensics records the original NACL for recovery.
+4. `ec2:DisassociateIamInstanceProfile` (association ID taken from evidence), and add the same `aws:TokenIssueTime` revoke-older-sessions deny to the instance role. Credentials stolen from instance metadata stay valid for hours otherwise.
+5. `ec2:ModifyInstanceAttribute(DisableApiTermination=true)` — protect the evidence from deletion
+6. Tag the instance: `argus:status=QUARANTINED`, `argus:incident_key={key}`
 
 **Phase: Eradicate**
 1. `ec2:StopInstances` — stop, don't terminate. Trade-off: memory is lost, the disk is kept (and already snapshotted).
@@ -769,7 +770,7 @@ Work in this order. Each phase produces something testable before you move on.
 - [ ] Terraform: VPC, subnets, IGW, route tables, VPC Flow Logs
 - [ ] Terraform: enable GuardDuty (with S3 Protection), CloudTrail (with log file validation and S3 data-event selector), Config (limited recorder + rule), Security Hub
 - [ ] Terraform: evidence bucket with Object Lock (`GOVERNANCE`, 1 day) + KMS
-- [ ] Terraform: quarantine security groups (untrack + isolate)
+- [ ] Terraform: quarantine security group (isolate) and deny-all quarantine NACL
 - [ ] Terraform: Athena table over the CloudTrail bucket
 - [ ] Verify: CloudTrail is logging and digest files appear; GuardDuty is active; GuardDuty findings appear in Security Hub (generate one sample finding to check)
 
@@ -842,7 +843,7 @@ Argus — Cloud SOAR Platform | Terraform, AWS GuardDuty, Step Functions, Lambda
   storage with S3 Object Lock for tamper-evident chain of custody.
 
 • Engineered Python/Boto3 playbooks that isolate compromised EC2 instances
-  (including live sessions), revoke IAM credentials and sessions via explicit
+  (cutting live sessions with a stateless NACL), revoke IAM credentials and sessions via explicit
   deny policies, and remediate S3 public exposure, run through a scoped
   remediation role and gated by an atomic DynamoDB idempotency check.
 
@@ -880,7 +881,7 @@ Argus — Cloud SOAR Platform | Terraform, AWS GuardDuty, Step Functions, Lambda
 |---|---|
 | Single Lambda does everything | Step Functions orchestrates discrete phases |
 | Contain immediately on detection | Preserve evidence first, then contain |
-| Security group swap leaves live sessions open | Untrack-then-isolate swap cuts existing connections |
+| Security group swap leaves live sessions open | Tested live: security groups can't end tracked connections, so a deny-all NACL cuts them |
 | Deny policy only on the user | Also revokes assumed-role and instance-role sessions |
 | One attack vector | Three attack vectors, unified orchestrator |
 | No idempotency | Atomic conditional write keyed on the finding ID |
