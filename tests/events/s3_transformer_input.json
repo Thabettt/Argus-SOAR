@@ -1,0 +1,30 @@
+{
+  "incident_id": "arn:aws:securityhub:us-east-1:111122223333:product/aws/guardduty/arn:aws:guardduty:us-east-1:111122223333:detector/abc/finding/s30001",
+  "finding_id": "arn:aws:securityhub:us-east-1:111122223333:product/aws/guardduty/arn:aws:guardduty:us-east-1:111122223333:detector/abc/finding/s30001",
+  "product_arn": "arn:aws:securityhub:us-east-1::product/aws/guardduty",
+  "event_id": "9a8b7c6d-5e4f-4a3b-2c1d-0e9f8a7b6c5d",
+  "event_received": "2026-11-20T16:20:30Z",
+  "finding_type": "TTPs/Discovery/Discovery:S3-MaliciousIPCaller.Custom",
+  "severity": "HIGH",
+  "finding_created": "2026-11-20T16:15:00Z",
+  "account": "111122223333",
+  "region": "us-east-1",
+  "resources": [
+    {
+      "Type": "AwsS3Bucket",
+      "Id": "arn:aws:s3:::argus-sim-data-test",
+      "Partition": "aws",
+      "Region": "us-east-1"
+    },
+    {
+      "Type": "AwsIamAccessKey",
+      "Id": "AWS::IAM::AccessKey:AKIAEXAMPLEKEY000002",
+      "Details": {
+        "AwsIamAccessKey": {
+          "PrincipalName": "argus-sim-exfil",
+          "PrincipalType": "IAMUser"
+        }
+      }
+    }
+  ]
+}
