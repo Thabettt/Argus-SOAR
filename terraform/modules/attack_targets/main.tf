@@ -149,7 +149,33 @@ resource "aws_iam_user_policy" "backdoor" {
       { Effect = "Allow", Action = ["s3:ListBucket"], Resource = aws_s3_bucket.decoy.arn },
       { Effect = "Allow", Action = ["s3:GetObject"], Resource = "${aws_s3_bucket.decoy.arn}/*" },
       { Effect = "Allow", Action = ["iam:GetUser"], Resource = aws_iam_user.backdoor.arn },
+      # The attacker pivots into a role. Role sessions are NOT covered by a deny on the
+      # user, so the IAM playbook must revoke them separately (aws:TokenIssueTime).
+      { Effect = "Allow", Action = "sts:AssumeRole", Resource = aws_iam_role.app.arn },
     ]
+  })
+}
+
+# A role the backdoor user can assume: exercises the playbook's role-session revocation.
+resource "aws_iam_role" "app" {
+  name = "${local.name}-app-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { AWS = aws_iam_user.backdoor.arn }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+  tags = local.tags
+}
+
+resource "aws_iam_role_policy" "app" {
+  name = "list-buckets"
+  role = aws_iam_role.app.id
+  policy = jsonencode({
+    Version   = "2012-10-17"
+    Statement = [{ Effect = "Allow", Action = "s3:ListAllMyBuckets", Resource = "*" }]
   })
 }
 

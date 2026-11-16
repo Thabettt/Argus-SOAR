@@ -66,3 +66,7 @@ output "sim_instance_profile" {
 output "sim_instance_role_name" {
   value = module.attack_targets.instance_role_name
 }
+
+output "sim_app_role_arn" {
+  value = module.attack_targets.app_role_arn
+}
