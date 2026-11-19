@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://argus.thabetology.workers.dev">
-    <img src="docs/assets/banner.svg" alt="Argus: automated incident response on AWS. Median time to containment: 8 seconds." width="100%">
+    <img src="docs/assets/banner.png" alt="Argus: automated incident response on AWS. A sphere of a hundred eyes, every one turned toward a finding. Median time to containment: 8 seconds." width="100%">
   </a>
 </p>
 
@@ -47,7 +47,7 @@ only to be attacked, and each with its own playbook.
 ## How it works
 
 <p align="center">
-  <img src="docs/assets/order.svg" alt="The relay: GuardDuty and AWS Config, to Security Hub, to EventBridge, to Step Functions. Then the order: preserve, contain, eradicate, package, finalize, notify." width="100%">
+  <img src="docs/assets/order.png" alt="The relay: GuardDuty and AWS Config, to Security Hub, to EventBridge, to Step Functions. Then the order: preserve, contain, eradicate, package, finalize, notify." width="100%">
 </p>
 
 A finding travels a short relay. **GuardDuty** and **AWS Config** detect, **Security Hub**
@@ -81,7 +81,7 @@ Around that core are the guards that make it safe to run unattended:
 ## Proven live
 
 <p align="center">
-  <img src="docs/assets/results.svg" alt="Median 8 s to contain, slowest 11 s, 7 of 7 evidence bundles verified with sha256sum, 0 resources contained twice." width="100%">
+  <img src="docs/assets/results.png" alt="Median 8 s to contain, slowest 11 s, 7 of 7 evidence bundles verified with sha256sum, 0 resources contained twice, 6 of 6 failures alerted a human." width="100%">
 </p>
 
 Argus was deployed to `us-east-1` and attacked for real. Across six live incidents, the
@@ -269,7 +269,7 @@ docs/                           measured results and README graphics
 <br>
 
 <p align="center">
-  <img src="docs/assets/coda.svg" alt="The Argus eye. Hera took the hundred eyes and set them in the peacock's tail, where they are still open." width="100%">
+  <img src="docs/assets/coda.png" alt="The hundred eyes, keeping watch. Hera took the hundred eyes and set them in the peacock's tail, where they are still open." width="100%">
 </p>
 
 <p align="center">
